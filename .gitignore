@@ -1,0 +1,12 @@
+# Never commit the ROM or anything derived from it.
+*.z64
+*.n64
+*.v64
+*.rom
+generated/
+
+# Build output
+build*/
+*.ipa
+.DS_Store
+xcuserdata/

@@ -1,0 +1,48 @@
+name: iOS shell
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: [iphoneos, iphonesimulator]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: |
+          if [ "${{ matrix.sdk }}" = iphoneos ]; then archs=arm64; else archs="arm64;x86_64"; fi
+          cmake -S . -B build -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=${{ matrix.sdk }} \
+            -DCMAKE_OSX_ARCHITECTURES="$archs" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0
+
+      - name: Build
+        run: |
+          cmake --build build --config Release --target sote -- \
+            -sdk ${{ matrix.sdk }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+
+      - name: Package unsigned IPA
+        if: matrix.sdk == 'iphoneos'
+        run: |
+          app=$(find build -path '*Release-iphoneos/SotE.app' -type d | head -1)
+          test -n "$app"
+          mkdir -p Payload
+          cp -R "$app" Payload/
+          zip -qry SotE-unsigned.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.sdk == 'iphoneos'
+        with:
+          name: SotE-unsigned-ipa
+          path: SotE-unsigned.ipa
