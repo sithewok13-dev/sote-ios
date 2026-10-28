@@ -17,13 +17,15 @@ Planning notes live in `jk-files` (branch `wip-sote-ios`).
 | Repo, GPL-3.0 licence, pinned submodules | done |
 | iOS shell: UIKit app, plume on Metal, rdram reservation probe | written, CI builds it |
 | RT64 on iOS (shader build for `iphoneos`, no SDL/nfd/IOKit) | next |
-| Game layer (recompiled SotE + runtime glue) | blocked on the ROM and on the SotE-Recomp licence answer |
+| Game layer: SotE-Recomp's code (now MIT) on iOS | blocked on the ROM |
 | Touch controls (IOSTouch overlay) | later |
 
-SotE-Recomp (GTTeancum) has no licence yet, so none of its code or config is
-used here. A licence request is open as its issue #21. The submodules are
-pinned to the same upstream commits SotE-Recomp 0.9.6 uses, so its code would
-fit if the author allows it.
+The game layer comes from [SotE-Recomp] by GTTeancum, who licensed its original
+code under MIT on 2026-10-28 (commit `7aec3d4`, answering issue #21) and
+welcomed ports. Per its `LICENSES.md`, that grant does not cover game files,
+music (`Sdata/MUSIC`), artwork, fonts or ROM-derived code, so none of those
+are copied here or bundled into builds. The submodules are pinned to the same
+upstream commits SotE-Recomp uses.
 
 ## Layout
 
@@ -71,9 +73,11 @@ Bundle id: `io.github.sithewok13.sote` (override with `-DSOTE_BUNDLE_ID=...`).
 
 ## Licence
 
-GPL-3.0 (see `LICENSE`), because N64ModernRuntime is GPL-3.0. N64Recomp, RT64
-and plume are MIT.
+GPL-3.0 (see `LICENSE`), because N64ModernRuntime is GPL-3.0. N64Recomp, RT64,
+plume and SotE-Recomp's original code are MIT; SotE-Recomp's sandec is
+LGPL-2.1. Credit for the PC port's game layer goes to GTTeancum.
 
 [N64Recomp]: https://github.com/N64Recomp/N64Recomp
 [N64ModernRuntime]: https://github.com/N64Recomp/N64ModernRuntime
 [RT64]: https://github.com/rt64/rt64
+[SotE-Recomp]: https://github.com/GTTeancum/SotE-Recomp
