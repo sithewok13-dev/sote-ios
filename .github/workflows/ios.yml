@@ -36,7 +36,8 @@ jobs:
 
       - name: Error summary
         if: failure()
-        run: grep -E "error:|Undefined symbols|ld: " build.log | sort -u | head -100
+        run: |
+          grep -E "error:|Undefined symbols|ld: " build.log | sort -u | head -100
 
       - name: Package unsigned IPA
         if: matrix.sdk == 'iphoneos'
