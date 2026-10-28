@@ -29,6 +29,9 @@ add_subdirectory("${SOTE_RUNTIME_DIR}" N64ModernRuntime)
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     enable_language(OBJC OBJCXX)
 
+    target_compile_options(LiveRecomp PRIVATE
+        -include "${CMAKE_CURRENT_SOURCE_DIR}/ios/compat/sljit_ios.h")
+
     add_subdirectory("${SOTE_PLUME_DIR}" plume)
 
     # plume's Apple window glue is AppKit-only; swap in the UIKit version.

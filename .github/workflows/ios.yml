@@ -28,9 +28,15 @@ jobs:
 
       - name: Build
         run: |
+          set -o pipefail
           cmake --build build --config Release --target sote -- \
-            -sdk ${{ matrix.sdk }} \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""
+            -sdk ${{ matrix.sdk }} -IDEBuildingContinueBuildingAfterErrors=YES \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee build.log
+
+      - name: Error summary
+        if: failure()
+        run: grep -E "error:|Undefined symbols|ld: " build.log | sort -u | head -100
 
       - name: Package unsigned IPA
         if: matrix.sdk == 'iphoneos'
