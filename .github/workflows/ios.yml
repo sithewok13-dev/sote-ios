@@ -35,7 +35,7 @@ jobs:
       - name: Build
         run: |
           set -o pipefail
-          cmake --build build --config Release --target sote -- \
+          cmake --build build --config Release --target sote sote_game -- \
             -sdk ${{ matrix.sdk }} -IDEBuildingContinueBuildingAfterErrors=YES \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             2>&1 | tee build.log

@@ -17,7 +17,7 @@ Planning notes live in `jk-files` (branch `wip-sote-ios`).
 | Repo, GPL-3.0 licence, pinned submodules | done |
 | iOS shell: UIKit app, plume on Metal, rdram reservation probe | works on device (0.1.2) |
 | RT64 on iOS: builds, 56 shaders compiled to Metal libraries | builds (0.2.0); not yet run on device |
-| Game layer: SotE-Recomp's code (now MIT) on iOS | in progress: submodule + its patches (0.2.1) |
+| Game layer: SotE-Recomp's code (now MIT) on iOS | in progress: `sote_game` library (0.3.0) |
 | Touch controls (IOSTouch overlay) | later |
 
 The game layer comes from [SotE-Recomp] by GTTeancum, who licensed its original
@@ -52,6 +52,16 @@ upstream commits SotE-Recomp uses.
 - `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
   configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
   `CAMetalLayer.displaySyncEnabled`) that abort on iOS.
+- `patches/sote-recomp/`: `0001` ports SotE-Recomp's Windows-only code: its
+  window, message pump, crash reports and executable path go behind
+  `#ifdef _WIN32` with iOS versions; `main()` becomes `sote_main()`;
+  `menu_renderer.cpp` gains Metal shaders; `rt64_renderer.cpp` passes the
+  Metal view to RT64.
+- `ios/game/`: the `sote_game` library: SotE-Recomp's game code plus
+  `sote_platform_ios.mm` (Documents folder, Metal view, keyboard stub) and
+  `sote_win32_compat.h` (the few Win32 names it uses elsewhere: key codes,
+  tick count, process id). Nothing made from the ROM is in it: the generated
+  code and `register_overlays.cpp` are built separately, only where the ROM is.
 - `ios/app/`: the app. `memory_probe.cpp` repeats librecomp's rdram setup
   (reserve 4 GiB, commit 512 MiB) and `plume_clear.cpp` presents a cleared
   Metal swap chain.

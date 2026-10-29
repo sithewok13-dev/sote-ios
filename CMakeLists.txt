@@ -5,7 +5,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS version")
 endif()
 
-project(SotEiOS VERSION 0.2.1 LANGUAGES C CXX)
+project(SotEiOS VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
@@ -55,6 +55,12 @@ foreach(patch IN LISTS sote_recomp_patches)
     else()
         message(FATAL_ERROR "Don't know which library ${patch_name} patches")
     endif()
+endforeach()
+
+# Our iOS port of SotE-Recomp's game layer (see ios/game).
+file(GLOB sote_port_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/sote-recomp/*.patch")
+foreach(patch IN LISTS sote_port_patches)
+    sote_apply_patch("${SOTE_RECOMP_DIR}" "${patch}")
 endforeach()
 
 # ultramodern + librecomp (and N64Recomp/LiveRecomp, which librecomp links).
@@ -126,5 +132,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # RT64 turns Retina off for macOS; on iOS render at the screen's native scale.
     target_compile_definitions(plume PRIVATE PLUME_APPLE_RETINA_ENABLED)
 
+    add_subdirectory(ios/game)
     add_subdirectory(ios)
 endif()

@@ -1,0 +1,275 @@
+diff --git a/src/frontend.cpp b/src/frontend.cpp
+index 87e7fd2..ba07566 100644
+--- a/src/frontend.cpp
++++ b/src/frontend.cpp
+@@ -23,7 +23,11 @@
+ #include <string>
+ #include <vector>
+ 
++#ifdef _WIN32
+ #include <Windows.h>
++#else
++#include "sote_win32_compat.h"
++#endif
+ #include <SDL.h>
+ 
+ namespace sote::frontend {
+@@ -58,10 +62,14 @@ std::chrono::steady_clock::time_point rapid_fire_checked{};
+ std::filesystem::file_time_type rapid_fire_mtime{};
+ 
+ std::filesystem::path rapid_fire_ini_path() {
++#ifdef _WIN32
+     wchar_t buffer[MAX_PATH]{};
+     const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+     return std::filesystem::path{std::wstring{buffer, length}}.parent_path() /
+         "SOTE_CHEATS.INI";
++#else
++    return sote::platform::data_directory() / "SOTE_CHEATS.INI";
++#endif
+ }
+ 
+ void refresh_rapid_fire_settings() {
+diff --git a/src/main.cpp b/src/main.cpp
+index 629ed21..47683d7 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -19,9 +19,14 @@
+ #include <unordered_set>
+ #include <vector>
+ 
++#ifdef _WIN32
+ #include <Windows.h>
+ #include <DbgHelp.h>
+ #include <TlHelp32.h>
++#else
++#include <ctime>
++#include "sote_win32_compat.h"
++#endif
+ 
+ #include "librecomp/game.hpp"
+ #include "librecomp/overlays.hpp"
+@@ -124,8 +129,10 @@ std::string smoke_expected_level_name;
+ std::filesystem::path runtime_directory;
+ std::filesystem::path selected_rom_path;
+ bool graphics_fullscreen = false;
++#ifdef _WIN32
+ HWND graphics_window = nullptr;
+ WINDOWPLACEMENT windowed_placement{sizeof(WINDOWPLACEMENT)};
++#endif
+ std::once_flag symbol_engine_once;
+ std::atomic<bool> stall_stack_dumped{false};
+ int last_display_activity_vi = 0;
+@@ -151,6 +158,10 @@ struct ScriptedInputPulse {
+ std::vector<ScriptedInputPulse> scripted_input;
+ 
+ std::filesystem::path get_executable_directory() {
++#ifndef _WIN32
++    // iOS: the app's Documents folder holds the ROM, settings and saves.
++    return sote::platform::data_directory();
++#else
+     std::vector<wchar_t> path_buffer(32768);
+     const DWORD path_length = GetModuleFileNameW(
+         nullptr,
+@@ -162,6 +173,7 @@ std::filesystem::path get_executable_directory() {
+     return std::filesystem::path(
+         path_buffer.data(),
+         path_buffer.data() + path_length).parent_path();
++#endif
+ }
+ 
+ uint32_t read_u32_be(const std::vector<uint8_t>& bytes, size_t offset) {
+@@ -292,19 +304,48 @@ void initialize_persistent_logging() {
+         (log_directory / "sote-latest.log").string();
+     const std::string stderr_path =
+         (log_directory / "sote-latest-errors.log").string();
++#ifdef _WIN32
+     if (freopen_s(
+             &stdout_file, stdout_path.c_str(), "w", stdout) != 0 ||
+         freopen_s(
+             &stderr_file, stderr_path.c_str(), "w", stderr) != 0) {
+         return;
+     }
++#else
++    stdout_file = std::freopen(stdout_path.c_str(), "w", stdout);
++    stderr_file = std::freopen(stderr_path.c_str(), "w", stderr);
++    if (stdout_file == nullptr || stderr_file == nullptr) {
++        return;
++    }
++#endif
+ 
+     std::setvbuf(stdout, nullptr, _IONBF, 0);
+     std::setvbuf(stderr, nullptr, _IONBF, 0);
+     persistent_logging = true;
+ 
++#ifdef _WIN32
+     SYSTEMTIME local_time{};
+     GetLocalTime(&local_time);
++#else
++    struct {
++        unsigned wYear, wMonth, wDay, wHour, wMinute, wSecond, wMilliseconds;
++    } local_time{};
++    {
++        const auto now = std::chrono::system_clock::now();
++        const std::time_t seconds = std::chrono::system_clock::to_time_t(now);
++        std::tm parts{};
++        localtime_r(&seconds, &parts);
++        local_time = {
++            static_cast<unsigned>(parts.tm_year + 1900),
++            static_cast<unsigned>(parts.tm_mon + 1),
++            static_cast<unsigned>(parts.tm_mday),
++            static_cast<unsigned>(parts.tm_hour),
++            static_cast<unsigned>(parts.tm_min),
++            static_cast<unsigned>(parts.tm_sec),
++            static_cast<unsigned>(std::chrono::duration_cast<std::chrono::milliseconds>(
++                now.time_since_epoch()).count() % 1000)};
++    }
++#endif
+     std::printf(
+         "[sote] session started %04u-%02u-%02u %02u:%02u:%02u.%03u "
+         "pid=%lu\n",
+@@ -1557,6 +1598,7 @@ void parse_scripted_input(const char* specification) {
+         scripted_input.size());
+ }
+ 
++#ifdef _WIN32
+ LONG WINAPI report_unhandled_exception(EXCEPTION_POINTERS* exception) {
+     const DWORD code = exception->ExceptionRecord->ExceptionCode;
+     const DWORD64 address =
+@@ -1760,6 +1802,11 @@ void dump_process_thread_stacks(const char* reason) {
+     CloseHandle(snapshot);
+     std::fflush(stderr);
+ }
++#else
++void dump_process_thread_stacks(const char* reason) {
++    std::fprintf(stderr, "[sote] thread stack dump unavailable on this platform (%s)\n", reason);
++}
++#endif // _WIN32
+ 
+ void retail_entrypoint(uint8_t* rdram, recomp_context* ctx) {
+     constexpr size_t main_offset = 0x1EC0;
+@@ -1873,6 +1920,7 @@ std::unique_ptr<ultramodern::renderer::RendererContext> create_renderer(
+         runtime_directory);
+ }
+ 
++#ifdef _WIN32
+ void toggle_graphics_fullscreen(HWND window) {
+     if (window == nullptr) {
+         return;
+@@ -2204,6 +2252,11 @@ ultramodern::renderer::WindowHandle create_window(void*) {
+     }
+     return {window, GetCurrentThreadId()};
+ }
++#else
++ultramodern::renderer::WindowHandle create_window(void*) {
++    return sote::platform::create_window();
++}
++#endif // _WIN32
+ 
+ void log_diagnostic_progress() {
+     // Runs independently of the VI, menu, renderer and window message pump.
+@@ -2226,6 +2279,7 @@ void update_gfx(void*) {
+     if (smoke_test) {
+         return;
+     }
++#ifdef _WIN32
+     sote::graphics_menu::Settings requested_window{};
+     if (sote::graphics_menu::take_window_request(requested_window)) {
+         // This callback owns the Win32 message pump, so size and style changes
+@@ -2267,6 +2321,12 @@ void update_gfx(void*) {
+         DispatchMessageW(&message);
+     }
+     update_game_mouse(graphics_window);
++#else
++    // The emulated menu's window size requests have no meaning on iOS.
++    sote::graphics_menu::Settings requested_window{};
++    sote::graphics_menu::take_window_request(requested_window);
++    sote::platform::update_gfx();
++#endif
+ }
+ 
+ RspUcodeFunc* get_rsp_microcode(const OSTask* task) {
+@@ -4757,10 +4817,15 @@ extern "C" void sote_note_motion_loop_guard(
+     std::fflush(stdout);
+ }
+ 
++#ifdef _WIN32
+ int main(int argc, char** argv) {
+     SetUnhandledExceptionFilter(report_unhandled_exception);
+     SetProcessDpiAwarenessContext(
+         DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
++#else
++// iOS: the app calls this on its game thread; UIKit owns the main thread.
++int sote_main(int argc, char** argv) {
++#endif
+ 
+     runtime_directory = get_executable_directory();
+     sote::graphics_menu::initialize(runtime_directory);
+diff --git a/src/menu_renderer.cpp b/src/menu_renderer.cpp
+index 69365b5..a808c71 100644
+--- a/src/menu_renderer.cpp
++++ b/src/menu_renderer.cpp
+@@ -21,6 +21,9 @@
+ #ifdef _WIN32
+ #include "shaders/FullScreenVS.hlsl.dxil.h"
+ #include "shaders/TextureCopyPS.hlsl.dxil.h"
++#elif defined(__APPLE__)
++#include "shaders/FullScreenVS.hlsl.metal.h"
++#include "shaders/TextureCopyPS.hlsl.metal.h"
+ #endif
+ 
+ namespace sote::menu_renderer {
+@@ -159,6 +162,11 @@ void initialize(RenderInterface* rhi, RenderDevice* device) {
+             r.vertex = device->createShader(FullScreenVSBlobDXIL, sizeof(FullScreenVSBlobDXIL), "VSMain", format);
+             r.pixel = device->createShader(TextureCopyPSBlobDXIL, sizeof(TextureCopyPSBlobDXIL), "PSMain", format);
+         }
++#elif defined(__APPLE__)
++        else if (format == RenderShaderFormat::METAL) {
++            r.vertex = device->createShader(FullScreenVSBlobMSL, sizeof(FullScreenVSBlobMSL), "VSMain", format);
++            r.pixel = device->createShader(TextureCopyPSBlobMSL, sizeof(TextureCopyPSBlobMSL), "PSMain", format);
++        }
+ #endif
+         else throw std::runtime_error("unsupported shader format");
+         if (!r.layout || !r.vertex || !r.pixel || !r.descriptor->get()) throw std::runtime_error("shader/descriptor allocation");
+diff --git a/src/rt64_renderer.cpp b/src/rt64_renderer.cpp
+index 8ca4162..29a4bfe 100644
+--- a/src/rt64_renderer.cpp
++++ b/src/rt64_renderer.cpp
+@@ -16,9 +16,11 @@
+ #include <string>
+ #include <vector>
+ 
++#ifdef _WIN32
+ #include <unknwn.h>
+ #include <objidl.h>
+ #include <oleauto.h>
++#endif
+ 
+ #include "gbi/rt64_gbi_f3d.h"
+ #include "gbi/rt64_gbi_f3dwave.h"
+@@ -170,7 +172,11 @@ public:
+         static uint8_t dummy_rom_header[0x40]{};
+ 
+         RT64::Application::Core core{};
++#if defined(__APPLE__)
++        core.window = {window_handle.window, window_handle.view};
++#else
+         core.window = window_handle.window;
++#endif
+         core.checkInterrupts = check_interrupts;
+         core.HEADER = dummy_rom_header;
+         core.RDRAM = rdram;
+@@ -253,7 +259,13 @@ public:
+         apply_compatibility_profile();
+         const bool use_configuration_file = app->appConfig.useConfigurationFile;
+         app->appConfig.useConfigurationFile = false; // Already loaded above.
+-        setup_result = map_setup_result((sote::menu_renderer::install(), app->setup(window_handle.thread_id)));
++        setup_result = map_setup_result((sote::menu_renderer::install(), app->setup(
++#if defined(__APPLE__)
++            0
++#else
++            window_handle.thread_id
++#endif
++            )));
+         app->appConfig.useConfigurationFile = use_configuration_file;
+         chosen_api = map_graphics_api(app->chosenGraphicsAPI);
+         if (setup_result != ultramodern::renderer::SetupResult::Success) {
