@@ -4,15 +4,20 @@
 //  - can librecomp's rdram reservation be made (memory_probe.cpp)?
 //  - does plume's Metal backend present through the UIKit glue (plume_clear.cpp)?
 // The screen is cleared green if both pass, amber if only rendering works.
+// Every step is written to Documents/sote-log.txt (Files app > SotE), so if
+// the app crashes, the log's last line shows where.
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+
+#include <sys/utsname.h>
 
 #include <memory>
 #include <string>
 
 #include "memory_probe.h"
 #include "plume_clear.h"
+#include "sote_log.h"
 
 @interface SoteMetalView : UIView
 @end
@@ -32,6 +37,7 @@
     CADisplayLink *_displayLink;
     std::unique_ptr<sote::PlumeClear> _renderer;
     bool _memoryOk;
+    bool _started;
 }
 
 - (void)loadView {
@@ -55,16 +61,31 @@
 
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
-    if (_displayLink != nil) {
+    if (_started) {
         return;
     }
 
+    _started = true;
+    _statusLabel.text = @"Shadows of the Empire (iOS shell)\nrunning checks...";
+    sote::log("view appeared, %.0fx%.0f points, scale %.1f",
+        _metalView.bounds.size.width, _metalView.bounds.size.height, _metalView.contentScaleFactor);
+
+    // Let the status text reach the screen before the checks run.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self runChecks];
+    });
+}
+
+- (void)runChecks {
+    sote::log("memory probe: start");
     std::string memoryReport = sote::probe_rdram_reservation(_memoryOk);
-    NSLog(@"%s", memoryReport.c_str());
+    sote::log("%s", memoryReport.c_str());
+    _statusLabel.text = [NSString stringWithFormat:@"Shadows of the Empire (iOS shell)\n%s\nplume: starting...",
+        memoryReport.c_str()];
 
     _renderer = sote::PlumeClear::create((__bridge void *)_metalView, (__bridge void *)_metalView.layer);
     const char *renderReport = _renderer ? "plume: Metal swap chain OK" : "plume: Metal setup failed";
-    NSLog(@"%s", renderReport);
+    sote::log("%s", renderReport);
 
     _statusLabel.text = [NSString stringWithFormat:@"Shadows of the Empire (iOS shell)\n%s\n%s",
         memoryReport.c_str(), renderReport];
@@ -115,7 +136,21 @@
 @interface SoteAppDelegate : UIResponder <UIApplicationDelegate>
 @end
 
+static void logUncaughtException(NSException *exception) {
+    sote::log("uncaught exception: %s: %s", exception.name.UTF8String, exception.reason.UTF8String);
+}
+
 @implementation SoteAppDelegate
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions {
+    NSSetUncaughtExceptionHandler(&logUncaughtException);
+    struct utsname systemInfo;
+    uname(&systemInfo);
+    NSString *version = [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    sote::log("SotE %s launched on %s, %s %s", version.UTF8String, systemInfo.machine,
+        UIDevice.currentDevice.systemName.UTF8String, UIDevice.currentDevice.systemVersion.UTF8String);
+    return YES;
+}
+
 - (UISceneConfiguration *)application:(UIApplication *)application configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession options:(UISceneConnectionOptions *)options {
     UISceneConfiguration *configuration = [[UISceneConfiguration alloc] initWithName:@"Default" sessionRole:connectingSceneSession.role];
     configuration.delegateClass = [SoteSceneDelegate class];

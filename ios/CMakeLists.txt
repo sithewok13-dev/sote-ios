@@ -6,6 +6,8 @@ add_executable(sote MACOSX_BUNDLE
     app/memory_probe.h
     app/plume_clear.cpp
     app/plume_clear.h
+    app/sote_log.h
+    app/sote_log.mm
 )
 
 set_target_properties(sote PROPERTIES

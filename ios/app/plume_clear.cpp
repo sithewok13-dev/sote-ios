@@ -1,9 +1,9 @@
 #include "plume_clear.h"
 
-#include <cstdio>
 #include <vector>
 
 #include "plume_render_interface.h"
+#include "sote_log.h"
 
 namespace plume {
     extern std::unique_ptr<RenderInterface> CreateMetalInterface();
@@ -39,33 +39,42 @@ namespace sote {
         }
 
     public:
+        uint32_t frameCount = 0;
+
         bool init(void *window, void *layer) {
+            sote::log("plume: CreateMetalInterface");
             renderInterface = CreateMetalInterface();
             if (renderInterface == nullptr) {
-                fprintf(stderr, "plume: CreateMetalInterface failed\n");
+                sote::log("plume: CreateMetalInterface failed");
                 return false;
             }
 
+            sote::log("plume: createDevice");
             device = renderInterface->createDevice();
             if (device == nullptr) {
-                fprintf(stderr, "plume: createDevice failed\n");
+                sote::log("plume: createDevice failed");
                 return false;
             }
 
+            sote::log("plume: createCommandQueue");
             commandQueue = device->createCommandQueue(RenderCommandListType::DIRECT);
             fence = device->createCommandFence();
             RenderWindow renderWindow = {};
             renderWindow.window = window;
             renderWindow.view = layer;
+            sote::log("plume: createSwapChain");
             swapChain = commandQueue->createSwapChain(RenderSwapChainDesc(renderWindow, SwapchainFormat, BufferCount));
+            sote::log("plume: swap chain resize");
             if (!swapChain->resize()) {
-                fprintf(stderr, "plume: swap chain resize failed\n");
+                sote::log("plume: swap chain resize failed");
                 return false;
             }
 
+            sote::log("plume: swap chain %ux%u, %u textures", swapChain->getWidth(), swapChain->getHeight(), swapChain->getTextureCount());
             commandList = commandQueue->createCommandList();
             acquireSemaphore = device->createCommandSemaphore();
             createFramebuffers();
+            sote::log("plume: ready");
             return true;
         }
 
@@ -77,16 +86,30 @@ namespace sote {
         }
 
         void render(float red, float green, float blue) override {
+            const uint32_t frame = frameCount++;
+            const bool trace = frame < 3;
+            if (trace) {
+                sote::log("frame %u: begin", frame);
+            }
+
             if (swapChain->needsResize()) {
                 resize();
             }
 
             if (framebuffers.empty()) {
+                if (trace) {
+                    sote::log("frame %u: no framebuffers", frame);
+                }
+
                 return;
             }
 
             uint32_t imageIndex = 0;
             if (!swapChain->acquireTexture(acquireSemaphore.get(), &imageIndex)) {
+                if (trace) {
+                    sote::log("frame %u: acquireTexture failed", frame);
+                }
+
                 return;
             }
 
@@ -112,6 +135,9 @@ namespace sote {
             commandQueue->executeCommandLists(&cmdList, 1, &waitSemaphore, 1, &signalSemaphore, 1, fence.get());
             swapChain->present(imageIndex, &signalSemaphore, 1);
             commandQueue->waitForCommandFence(fence.get());
+            if (trace) {
+                sote::log("frame %u: presented", frame);
+            }
         }
     };
 
