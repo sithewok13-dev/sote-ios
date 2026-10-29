@@ -5,7 +5,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS version")
 endif()
 
-project(SotEiOS VERSION 0.5.2 LANGUAGES C CXX)
+project(SotEiOS VERSION 0.5.3 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
@@ -77,6 +77,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     foreach(sub IN ITEMS rt64 plume)
         file(GLOB sub_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/${sub}/*.patch")
+        list(SORT sub_patches)
         foreach(patch IN LISTS sub_patches)
             if(sub STREQUAL "rt64")
                 sote_apply_patch("${SOTE_RT64_DIR}" "${patch}")

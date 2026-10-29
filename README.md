@@ -49,6 +49,8 @@ upstream commits SotE-Recomp uses.
   target, compiles Metal shaders for `iphoneos`/`iphonesimulator`, uses the host
   tools and our SDL, drops the desktop file dialog (nfd), IOKit and the texture
   tools, and has `spirv_cross_msl` emit iOS Metal.
+  `0002` logs RT64's present path (swap chain resize, empty swap chain,
+  failed acquire or present) while the game shows a black screen.
 - `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
   configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
   `CAMetalLayer.displaySyncEnabled`) that abort on iOS.

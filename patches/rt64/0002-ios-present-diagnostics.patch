@@ -1,0 +1,53 @@
+diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
+index fd3a38c..30480bb 100644
+--- a/src/hle/rt64_present_queue.cpp
++++ b/src/hle/rt64_present_queue.cpp
+@@ -532,6 +532,12 @@ namespace RT64 {
+             const bool presentFrame = (i < framesToPresent) && swapChainValid;
+             if (presentFrame) {
+                 swapChainValid = ext.swapChain->acquireTexture(acquiredSemaphore.get(), &swapChainIndex);
++                if (!swapChainValid) {
++                    static int acquireReports = 0;
++                    if (acquireReports++ < 5) {
++                        std::fprintf(stderr, "[rt64] swap chain acquireTexture failed\n");
++                    }
++                }
+             }
+ 
+             if (presentFrame && swapChainValid) {
+@@ -657,6 +663,12 @@ namespace RT64 {
+                 RenderCommandSemaphore *waitSemaphore = drawSemaphores[swapChainIndex].get();
+                 presentTimestamp = Timer::current();
+                 swapChainValid = ext.swapChain->present(swapChainIndex, &waitSemaphore, 1);
++                if (!swapChainValid) {
++                    static int presentReports = 0;
++                    if (presentReports++ < 5) {
++                        std::fprintf(stderr, "[rt64] swap chain present failed\n");
++                    }
++                }
+                 presentProfiler.logAndRestart();
+             }
+         }
+@@ -729,6 +741,8 @@ namespace RT64 {
+                     ext.presentGraphicsWorker->wait();
+                     swapChainValid = ext.swapChain->resize();
+                     swapChainFramebuffers.clear();
++                    std::fprintf(stderr, "[rt64] swap chain resize: valid=%d size=%ux%u\n",
++                        swapChainValid ? 1 : 0, ext.swapChain->getWidth(), ext.swapChain->getHeight());
+ 
+                     if (swapChainValid) {
+                         ext.sharedResources->setSwapChainSize(ext.swapChain->getWidth(), ext.swapChain->getHeight());
+@@ -758,6 +772,13 @@ namespace RT64 {
+                 }
+ 
+                 skipPresent = skipPresent || ext.swapChain->isEmpty();
++                if (ext.swapChain->isEmpty()) {
++                    static int emptyReports = 0;
++                    if (emptyReports++ < 5) {
++                        std::fprintf(stderr, "[rt64] present skipped: swap chain is empty (%ux%u)\n",
++                            ext.swapChain->getWidth(), ext.swapChain->getHeight());
++                    }
++                }
+ 
+                 Present &present = presents[processCursor];
+                 ext.workloadQueue->waitForWorkloadId(present.workloadId);

@@ -134,6 +134,9 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
 
     __weak SoteViewController *weakSelf = self;
     NSThread *gameThread = [[NSThread alloc] initWithBlock:^{
+        // Diagnostics while the game shows a black screen: SotE-Recomp's RT64
+        // patch prints one line per drawn frame saying what it presented.
+        setenv("SOTE_TRACE_PRESENT_SOURCE", "1", 1);
         static char programName[] = "SotE";
         char *argv[] = {programName, nullptr};
         const int result = sote_main(1, argv);
