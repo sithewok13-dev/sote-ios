@@ -16,7 +16,7 @@ Planning notes live in `jk-files` (branch `wip-sote-ios`).
 | --- | --- |
 | Repo, GPL-3.0 licence, pinned submodules | done |
 | iOS shell: UIKit app, plume on Metal, rdram reservation probe | works on device (0.1.2) |
-| RT64 on iOS (shader build for `iphoneos`, no SDL/nfd/IOKit) | next |
+| RT64 on iOS: builds, shaders compiled for iOS Metal | in CI (0.2.0) |
 | Game layer: SotE-Recomp's code (now MIT) on iOS | blocked on the ROM |
 | Touch controls (IOSTouch overlay) | later |
 
@@ -33,10 +33,18 @@ upstream commits SotE-Recomp uses.
   to turn the ROM into C. Never built for iOS.
 - `third_party/N64ModernRuntime`: ultramodern + librecomp, built into the app.
   Mods (LiveRecomp/sljit) stay off on iOS, since they need a JIT.
-- `third_party/rt64`: the renderer. For now only its plume submodule is built
-  for iOS.
+- `third_party/rt64`: the renderer, built for iOS with `patches/rt64` (see below).
+- `third_party/SDL`: SDL 2.32.10, built statically for iOS. RT64 needs it, and
+  the game layer uses it for controllers and audio.
+- `ios/host_tools/`: builds RT64's shader tools (`file_to_c`, `spirv_cross_msl`)
+  for the build machine; CMake runs it at configure time. RT64 runs them during
+  the build, so iOS builds of them would be useless.
 - `ios/plume/plume_apple_uikit.mm`: UIKit replacement for plume's AppKit-only
   `plume_apple.mm`, swapped in by `CMakeLists.txt` (no upstream patch).
+- `patches/rt64/`: `0001` makes RT64 build for iOS: keeps the iOS deployment
+  target, compiles Metal shaders for `iphoneos`/`iphonesimulator`, uses the host
+  tools and our SDL, drops the desktop file dialog (nfd), IOKit and the texture
+  tools, and has `spirv_cross_msl` emit iOS Metal.
 - `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
   configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
   `CAMetalLayer.displaySyncEnabled`) that abort on iOS.

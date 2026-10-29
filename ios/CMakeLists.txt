@@ -31,6 +31,7 @@ target_link_libraries(sote PRIVATE
     librecomp
     ultramodern
     plume
+    rt64
     "-framework UIKit"
     "-framework Foundation"
     "-framework Metal"

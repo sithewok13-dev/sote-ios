@@ -5,7 +5,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS version")
 endif()
 
-project(SotEiOS VERSION 0.1.2 LANGUAGES C CXX)
+project(SotEiOS VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
@@ -14,9 +14,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(SOTE_BUNDLE_ID "io.github.sithewok13.sote" CACHE STRING "iOS bundle identifier")
 set(SOTE_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/N64ModernRuntime")
-set(SOTE_PLUME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rt64/src/contrib/plume")
+set(SOTE_RT64_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rt64")
+set(SOTE_PLUME_DIR "${SOTE_RT64_DIR}/src/contrib/plume")
+set(SOTE_SDL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL")
 
-foreach(dir "${SOTE_RUNTIME_DIR}" "${SOTE_PLUME_DIR}")
+foreach(dir "${SOTE_RUNTIME_DIR}" "${SOTE_RT64_DIR}" "${SOTE_PLUME_DIR}" "${SOTE_SDL_DIR}")
     if(NOT EXISTS "${dir}/CMakeLists.txt")
         message(FATAL_ERROR "${dir} is missing. Run: git submodule update --init --recursive")
     endif()
@@ -46,18 +48,64 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_compile_options(LiveRecomp PRIVATE
         -include "${CMAKE_CURRENT_SOURCE_DIR}/ios/compat/sljit_ios.h")
 
-    file(GLOB plume_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/plume/*.patch")
-    foreach(patch IN LISTS plume_patches)
-        sote_apply_patch("${SOTE_PLUME_DIR}" "${patch}")
+    foreach(sub IN ITEMS rt64 plume)
+        file(GLOB sub_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/${sub}/*.patch")
+        foreach(patch IN LISTS sub_patches)
+            if(sub STREQUAL "rt64")
+                sote_apply_patch("${SOTE_RT64_DIR}" "${patch}")
+            else()
+                sote_apply_patch("${SOTE_PLUME_DIR}" "${patch}")
+            endif()
+        endforeach()
     endforeach()
 
-    add_subdirectory("${SOTE_PLUME_DIR}" plume)
+    # RT64's shader tools run during the build, so build them for this machine.
+    set(host_tools_build "${CMAKE_BINARY_DIR}/host_tools")
+    if(NOT EXISTS "${host_tools_build}/bin/spirv_cross_msl")
+        message(STATUS "Building RT64 host tools in ${host_tools_build}")
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E env --unset=SDKROOT --unset=IPHONEOS_DEPLOYMENT_TARGET
+                "${CMAKE_COMMAND}" -S "${CMAKE_CURRENT_SOURCE_DIR}/ios/host_tools" -B "${host_tools_build}"
+                -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release "-DRT64_DIR=${SOTE_RT64_DIR}"
+            RESULT_VARIABLE result)
+        if(NOT result EQUAL 0)
+            message(FATAL_ERROR "Configuring RT64 host tools failed")
+        endif()
+        execute_process(
+            COMMAND "${CMAKE_COMMAND}" -E env --unset=SDKROOT --unset=IPHONEOS_DEPLOYMENT_TARGET
+                "${CMAKE_COMMAND}" --build "${host_tools_build}" --parallel
+            RESULT_VARIABLE result)
+        if(NOT result EQUAL 0)
+            message(FATAL_ERROR "Building RT64 host tools failed")
+        endif()
+    endif()
+    set(RT64_HOST_TOOLS_DIR "${host_tools_build}/bin")
+
+    # Compile RT64's Metal shaders for the SDK being targeted.
+    if(CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
+        set(RT64_METAL_SDK "iphonesimulator")
+    else()
+        set(RT64_METAL_SDK "iphoneos")
+    endif()
+
+    # SDL2: RT64 needs it, and the game layer uses it for controllers and audio.
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${SOTE_SDL_DIR}" SDL EXCLUDE_FROM_ALL)
+    set(SDL2_INCLUDE_DIRS "$<TARGET_PROPERTY:SDL2-static,INTERFACE_INCLUDE_DIRECTORIES>")
+    set(SDL2_LIBRARIES SDL2-static)
+
+    set(RT64_STATIC TRUE)
+    add_subdirectory("${SOTE_RT64_DIR}" rt64)
 
     # plume's Apple window glue is AppKit-only; swap in the UIKit version.
     get_target_property(plume_sources plume SOURCES)
     list(REMOVE_ITEM plume_sources plume_apple.mm)
     list(APPEND plume_sources "${CMAKE_CURRENT_SOURCE_DIR}/ios/plume/plume_apple_uikit.mm")
     set_target_properties(plume PROPERTIES SOURCES "${plume_sources}")
+    # RT64 turns Retina off for macOS; on iOS render at the screen's native scale.
+    target_compile_definitions(plume PRIVATE PLUME_APPLE_RETINA_ENABLED)
 
     add_subdirectory(ios)
 endif()
