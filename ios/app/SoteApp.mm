@@ -155,13 +155,28 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
     gameThread.qualityOfService = NSQualityOfServiceUserInteractive;
     [gameThread start];
 
-    // RT64 draws over the whole view from here on.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+    // Until the game is known to draw, show the game's own log live over the
+    // view, so a screenshot shows where it got to. Tap to hide or show it.
+    _statusLabel.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
+    _statusLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+    _metalView.userInteractionEnabled = YES;
+    [_metalView addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleLog)]];
+    NSURL *logs = [documents URLByAppendingPathComponent:@"logs"];
+    [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
         SoteViewController *strongSelf = weakSelf;
-        if (strongSelf != nil && !strongSelf->_gameStopped) {
-            strongSelf->_statusLabel.hidden = YES;
+        if (strongSelf == nil || strongSelf->_gameStopped) {
+            [timer invalidate];
+            return;
         }
-    });
+
+        strongSelf->_statusLabel.text = [NSString stringWithFormat:@"SotE log (tap to hide)\n%@\n-- errors --\n%@",
+            lastLines([logs URLByAppendingPathComponent:@"sote-latest.log"], 10),
+            lastLines([logs URLByAppendingPathComponent:@"sote-latest-errors.log"], 10)];
+    }];
+}
+
+- (void)toggleLog {
+    _statusLabel.hidden = !_statusLabel.hidden;
 }
 
 // The last `count` lines of a text file, or an empty string.
