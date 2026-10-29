@@ -5,7 +5,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS version")
 endif()
 
-project(SotEiOS VERSION 0.2.0 LANGUAGES C CXX)
+project(SotEiOS VERSION 0.2.1 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
@@ -17,8 +17,9 @@ set(SOTE_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/N64ModernRuntime")
 set(SOTE_RT64_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rt64")
 set(SOTE_PLUME_DIR "${SOTE_RT64_DIR}/src/contrib/plume")
 set(SOTE_SDL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL")
+set(SOTE_RECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SotE-Recomp")
 
-foreach(dir "${SOTE_RUNTIME_DIR}" "${SOTE_RT64_DIR}" "${SOTE_PLUME_DIR}" "${SOTE_SDL_DIR}")
+foreach(dir "${SOTE_RUNTIME_DIR}" "${SOTE_RT64_DIR}" "${SOTE_PLUME_DIR}" "${SOTE_SDL_DIR}" "${SOTE_RECOMP_DIR}")
     if(NOT EXISTS "${dir}/CMakeLists.txt")
         message(FATAL_ERROR "${dir} is missing. Run: git submodule update --init --recursive")
     endif()
@@ -37,6 +38,24 @@ function(sote_apply_patch repo patch)
     endif()
     message(STATUS "Applied ${patch}")
 endfunction()
+
+# SotE-Recomp's own fixes to the runtime, RT64 and plume (MIT, see
+# third_party/SotE-Recomp/LICENSES.md), applied in its numbered order. The
+# target library is named in each file name.
+file(GLOB sote_recomp_patches "${SOTE_RECOMP_DIR}/patches/*.patch")
+list(SORT sote_recomp_patches)
+foreach(patch IN LISTS sote_recomp_patches)
+    get_filename_component(patch_name "${patch}" NAME)
+    if(patch_name MATCHES "-n64modernruntime-")
+        sote_apply_patch("${SOTE_RUNTIME_DIR}" "${patch}")
+    elseif(patch_name MATCHES "-rt64-")
+        sote_apply_patch("${SOTE_RT64_DIR}" "${patch}")
+    elseif(patch_name MATCHES "-plume-")
+        sote_apply_patch("${SOTE_PLUME_DIR}" "${patch}")
+    else()
+        message(FATAL_ERROR "Don't know which library ${patch_name} patches")
+    endif()
+endforeach()
 
 # ultramodern + librecomp (and N64Recomp/LiveRecomp, which librecomp links).
 # Mods are not used on iOS: LiveRecomp's JIT can't run without a JIT entitlement.

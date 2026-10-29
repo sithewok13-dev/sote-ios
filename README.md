@@ -17,7 +17,7 @@ Planning notes live in `jk-files` (branch `wip-sote-ios`).
 | Repo, GPL-3.0 licence, pinned submodules | done |
 | iOS shell: UIKit app, plume on Metal, rdram reservation probe | works on device (0.1.2) |
 | RT64 on iOS: builds, 56 shaders compiled to Metal libraries | builds (0.2.0); not yet run on device |
-| Game layer: SotE-Recomp's code (now MIT) on iOS | blocked on the ROM |
+| Game layer: SotE-Recomp's code (now MIT) on iOS | in progress: submodule + its patches (0.2.1) |
 | Touch controls (IOSTouch overlay) | later |
 
 The game layer comes from [SotE-Recomp] by GTTeancum, who licensed its original
@@ -34,6 +34,10 @@ upstream commits SotE-Recomp uses.
 - `third_party/N64ModernRuntime`: ultramodern + librecomp, built into the app.
   Mods (LiveRecomp/sljit) stay off on iOS, since they need a JIT.
 - `third_party/rt64`: the renderer, built for iOS with `patches/rt64` (see below).
+- `third_party/SotE-Recomp`: GTTeancum's PC port (MIT), pinned at `7aec3d4`.
+  Its game code becomes the game layer; its patches to the runtime, RT64 and
+  plume are applied by `CMakeLists.txt` before ours. Its own submodules are
+  not needed (the ones here are the same commits).
 - `third_party/SDL`: SDL 2.32.10, built statically for iOS. RT64 needs it, and
   the game layer uses it for controllers and audio.
 - `ios/host_tools/`: builds RT64's shader tools (`file_to_c`, `spirv_cross_msl`)
@@ -79,7 +83,8 @@ ID through Sideloadly, AltStore or similar to install it.
 Locally on a Mac with Xcode:
 
 ```sh
-git submodule update --init --recursive
+git submodule update --init third_party/SotE-Recomp
+git submodule update --init --recursive third_party/N64Recomp third_party/N64ModernRuntime third_party/rt64 third_party/SDL
 cmake -S . -B build -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0
 open build/SotEiOS.xcodeproj   # pick your team under Signing, then run on a device
 ```

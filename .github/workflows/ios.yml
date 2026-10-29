@@ -14,8 +14,14 @@ jobs:
         sdk: [iphoneos, iphonesimulator]
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+
+      # SotE-Recomp has its own copies of the runtime and RT64 as submodules;
+      # this repo pins the same commits, so don't clone them twice.
+      - name: Submodules
+        run: |
+          git submodule update --init --depth 1 third_party/SotE-Recomp
+          git submodule update --init --recursive \
+            third_party/N64Recomp third_party/N64ModernRuntime third_party/rt64 third_party/SDL
 
       - name: Configure
         run: |
