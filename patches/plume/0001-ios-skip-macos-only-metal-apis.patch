@@ -1,0 +1,39 @@
+diff --git a/plume_metal.cpp b/plume_metal.cpp
+index 373c87e..6cc309b 100644
+--- a/plume_metal.cpp
++++ b/plume_metal.cpp
+@@ -2022,12 +2022,21 @@ namespace plume {
+ 
+     void MetalSwapChain::setVsyncEnabled(const bool vsyncEnabled) {
+         MetalAutoreleasePool releasePool;
++#if PLUME_IOS
++        // CAMetalLayer.displaySyncEnabled is macOS-only; iOS always syncs to the display.
++        (void)vsyncEnabled;
++#else
+         layer->setDisplaySyncEnabled(vsyncEnabled);
++#endif
+     }
+ 
+     bool MetalSwapChain::isVsyncEnabled() const {
+         MetalAutoreleasePool releasePool;
++#if PLUME_IOS
++        return true;
++#else
+         return layer->displaySyncEnabled();
++#endif
+     }
+ 
+     uint32_t MetalSwapChain::getWidth() const {
+@@ -3796,7 +3805,12 @@ namespace plume {
+ 
+         const std::string deviceName(mtl->name()->utf8String());
+         description.name = deviceName;
++#if PLUME_IOS
++        // MTLDevice.location is macOS-only; iOS GPUs are always built in.
++        description.type = RenderDeviceType::INTEGRATED;
++#else
+         description.type = mapDeviceType(mtl->location());
++#endif
+         description.driverVersion = 1; // Unavailable
+         description.vendor = mtl->supportsFamily(MTL::GPUFamilyApple1) ? RenderDeviceVendor::APPLE : getRenderDeviceVendor(mtl->registryID());
+         description.dedicatedVideoMemory = mtl->recommendedMaxWorkingSetSize();

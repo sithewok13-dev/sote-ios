@@ -37,6 +37,9 @@ upstream commits SotE-Recomp uses.
   for iOS.
 - `ios/plume/plume_apple_uikit.mm`: UIKit replacement for plume's AppKit-only
   `plume_apple.mm`, swapped in by `CMakeLists.txt` (no upstream patch).
+- `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
+  configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
+  `CAMetalLayer.displaySyncEnabled`) that abort on iOS.
 - `ios/app/`: the app. `memory_probe.cpp` repeats librecomp's rdram setup
   (reserve 4 GiB, commit 512 MiB) and `plume_clear.cpp` presents a cleared
   Metal swap chain.

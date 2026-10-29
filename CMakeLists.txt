@@ -5,7 +5,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS version")
 endif()
 
-project(SotEiOS VERSION 0.1.1 LANGUAGES C CXX)
+project(SotEiOS VERSION 0.1.2 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
@@ -22,6 +22,20 @@ foreach(dir "${SOTE_RUNTIME_DIR}" "${SOTE_PLUME_DIR}")
     endif()
 endforeach()
 
+# Applies a patch to a submodule's working tree once (skipped if already applied).
+function(sote_apply_patch repo patch)
+    execute_process(COMMAND git -C "${repo}" apply --reverse --check "${patch}"
+        RESULT_VARIABLE already_applied OUTPUT_QUIET ERROR_QUIET)
+    if(already_applied EQUAL 0)
+        return()
+    endif()
+    execute_process(COMMAND git -C "${repo}" apply "${patch}" RESULT_VARIABLE result)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "Could not apply ${patch} to ${repo}")
+    endif()
+    message(STATUS "Applied ${patch}")
+endfunction()
+
 # ultramodern + librecomp (and N64Recomp/LiveRecomp, which librecomp links).
 # Mods are not used on iOS: LiveRecomp's JIT can't run without a JIT entitlement.
 add_subdirectory("${SOTE_RUNTIME_DIR}" N64ModernRuntime)
@@ -31,6 +45,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     target_compile_options(LiveRecomp PRIVATE
         -include "${CMAKE_CURRENT_SOURCE_DIR}/ios/compat/sljit_ios.h")
+
+    file(GLOB plume_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/plume/*.patch")
+    foreach(patch IN LISTS plume_patches)
+        sote_apply_patch("${SOTE_PLUME_DIR}" "${patch}")
+    endforeach()
 
     add_subdirectory("${SOTE_PLUME_DIR}" plume)
 
