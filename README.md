@@ -91,15 +91,27 @@ the owner's agreement (2026-10-29), `rom/sote.z64.gpg` holds their ROM
 encrypted with AES-256 (GnuPG). The `game` CI job unlocks it with the
 `SOTE_ROM_KEY` Actions secret, generates the code (SotE-Recomp's
 `prepare_recomp_rom.py`, N64Recomp, RSPRecomp), deletes the unlocked ROM,
-builds the app with `-DSOTE_GENERATED_DIR=...` and uploads `SotE-game.ipa` as a
-private artifact kept for one day. Without the secret the job is skipped.
+builds the app with `-DSOTE_GENERATED_DIR=...` and uploads
+`SotE-iOS-<version>.ipa`, kept for 30 days. Without the secret the job is
+skipped.
 
-On the phone, the game also reads the ROM at run time: copy it to
-**Files > On My iPhone > SotE** as
-`Star Wars - Shadows of the Empire (USA) (Rev 2).z64`.
+Like SotE-Recomp's Windows release, the IPA contains no ROM: every player
+supplies their own. It holds the recompiled game code (as SotE-Recomp's
+executable does); SotE-Recomp's `LICENSES.md` notes that its MIT grant does
+not cover ROM-derived code or the game's names, art and media.
 
-The IPA contains code made from the game, so it is for the owner's own use and
-must not be shared (see SotE-Recomp's `LICENSES.md`).
+## Playing
+
+1. Install `SotE-iOS-<version>.ipa` with Feather, Sideloadly, AltStore or
+   similar.
+2. Copy your own *Shadows of the Empire* (USA, v1.2 / Rev 2) ROM into
+   **Files > On My iPhone > SotE**: a `.z64`, `.v64` or `.n64` file under any
+   name, or a `.zip` with one inside. The app converts it to
+   `sote.us.v1.2.z64` on first launch and checks it is the right game.
+3. Open SotE. A game controller works now; touch controls come later.
+
+If anything goes wrong, `sote-log.txt` and the `logs` folder in the same
+place say what happened.
 
 ## Building
 

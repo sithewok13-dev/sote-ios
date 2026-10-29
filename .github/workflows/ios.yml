@@ -61,9 +61,9 @@ jobs:
           path: SotE-unsigned.ipa
 
   # The playable app. Needs the SOTE_ROM_KEY secret, which unlocks
-  # rom/sote.z64.gpg; without it this job does nothing. The unlocked ROM and
-  # the code generated from it exist only on the build machine, and the IPA
-  # (which contains that code) is a private artifact kept for one day.
+  # rom/sote.z64.gpg; without it this job does nothing. The unlocked ROM is
+  # deleted once the game code is generated, and is never put in the IPA:
+  # like SotE-Recomp's Windows release, players supply their own ROM.
   game:
     runs-on: macos-15
     if: github.event_name != 'pull_request'
@@ -141,12 +141,14 @@ jobs:
           test -n "$app"
           mkdir -p Payload
           cp -R "$app" Payload/
-          zip -qry SotE-game.ipa Payload
-          ls -l SotE-game.ipa
+          version=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$app/Info.plist")
+          echo "IPA_NAME=SotE-iOS-$version.ipa" >> "$GITHUB_ENV"
+          zip -qry "SotE-iOS-$version.ipa" Payload
+          ls -l "SotE-iOS-$version.ipa"
 
       - uses: actions/upload-artifact@v4
         if: steps.key.outputs.present == 'true'
         with:
-          name: SotE-game-ipa
-          path: SotE-game.ipa
-          retention-days: 1
+          name: ${{ env.IPA_NAME }}
+          path: ${{ env.IPA_NAME }}
+          retention-days: 30

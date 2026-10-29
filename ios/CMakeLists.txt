@@ -43,5 +43,6 @@ target_link_libraries(sote PRIVATE
 if(TARGET sote_rom)
     target_compile_definitions(sote PRIVATE SOTE_WITH_GAME=1)
     target_include_directories(sote PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/game")
-    target_link_libraries(sote PRIVATE sote_game sote_rom)
+    target_sources(sote PRIVATE app/rom_import.cpp app/rom_import.h)
+    target_link_libraries(sote PRIVATE sote_game sote_rom miniz)
 endif()

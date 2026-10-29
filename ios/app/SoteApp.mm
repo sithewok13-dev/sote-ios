@@ -23,14 +23,8 @@
 #include "sote_log.h"
 
 #if SOTE_WITH_GAME
+#include "rom_import.h"
 #include "sote_platform_ios.h"
-
-// The ROM names SotE-Recomp's main() looks for in its data directory.
-static NSArray<NSString *> *const kRomNames = @[
-    @"Star Wars - Shadows of the Empire (USA) (Rev 2).z64",
-    @"Star Wars - Shadows of the Empire (U) (V1.2) [!].z64",
-    @"sote.us.v1.2.z64",
-];
 #endif
 
 @interface SoteMetalView : UIView
@@ -118,27 +112,21 @@ static NSArray<NSString *> *const kRomNames = @[
 #if SOTE_WITH_GAME
 - (void)startGameWithMemoryReport:(const std::string &)memoryReport {
     NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
-    NSString *romName = nil;
-    for (NSString *name in kRomNames) {
-        if ([NSFileManager.defaultManager fileExistsAtPath:[documents URLByAppendingPathComponent:name].path]) {
-            romName = name;
-            break;
-        }
-    }
-
-    if (romName == nil) {
-        sote::log("game: no ROM in Documents");
+    std::string romMessage;
+    if (!sote::import_rom(documents.path.fileSystemRepresentation, romMessage)) {
+        sote::log("game: %s", romMessage.c_str());
         _statusLabel.text = [NSString stringWithFormat:
             @"Shadows of the Empire\n%s\n\n"
-            @"Copy your ROM into the Files app:\n"
-            @"On My iPhone > SotE\n"
-            @"named: %@\n\n"
-            @"Then close and reopen this app.",
-            memoryReport.c_str(), kRomNames.firstObject];
+            @"%s\n\n"
+            @"Copy your own Shadows of the Empire (USA) ROM into\n"
+            @"Files > On My iPhone > SotE\n"
+            @"(.z64, .v64, .n64 or a .zip with one inside),\n"
+            @"then close and reopen this app.",
+            memoryReport.c_str(), romMessage.c_str()];
         return;
     }
 
-    sote::log("game: found %s, starting", romName.UTF8String);
+    sote::log("game: ROM ready, starting");
     _statusLabel.text = @"Shadows of the Empire\nstarting...";
     sote::platform::ios_set_game_view((__bridge void *)_metalView, (__bridge void *)_metalView.layer);
 
