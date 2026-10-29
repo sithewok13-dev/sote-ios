@@ -15,7 +15,7 @@ Planning notes live in `jk-files` (branch `wip-sote-ios`).
 | Step | State |
 | --- | --- |
 | Repo, GPL-3.0 licence, pinned submodules | done |
-| iOS shell: UIKit app, plume on Metal, rdram reservation probe | written, CI builds it |
+| iOS shell: UIKit app, plume on Metal, rdram reservation probe | works on device (0.1.2) |
 | RT64 on iOS (shader build for `iphoneos`, no SDL/nfd/IOKit) | next |
 | Game layer: SotE-Recomp's code (now MIT) on iOS | blocked on the ROM |
 | Touch controls (IOSTouch overlay) | later |
@@ -57,6 +57,10 @@ Launch the app on a device. It shows two lines:
 The screen turns green when both pass and amber when only rendering works.
 The simulator follows macOS memory rules, so only a real device answers the
 first question.
+
+Result on an iPhone 18 Pro Max, iOS 27.2, sideloaded with Feather (0.1.2,
+2026-10-29): both OK, green. librecomp's memory layout works unchanged; no
+extended-virtual-addressing entitlement is needed.
 
 ## Building
 
