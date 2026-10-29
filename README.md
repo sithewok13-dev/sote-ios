@@ -16,7 +16,7 @@ Planning notes live in `jk-files` (branch `wip-sote-ios`).
 | --- | --- |
 | Repo, GPL-3.0 licence, pinned submodules | done |
 | iOS shell: UIKit app, plume on Metal, rdram reservation probe | works on device (0.1.2) |
-| RT64 on iOS: builds, shaders compiled for iOS Metal | in CI (0.2.0) |
+| RT64 on iOS: builds, 56 shaders compiled to Metal libraries | builds (0.2.0); not yet run on device |
 | Game layer: SotE-Recomp's code (now MIT) on iOS | blocked on the ROM |
 | Touch controls (IOSTouch overlay) | later |
 
