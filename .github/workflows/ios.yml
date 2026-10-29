@@ -59,3 +59,94 @@ jobs:
         with:
           name: SotE-unsigned-ipa
           path: SotE-unsigned.ipa
+
+  # The playable app. Needs the SOTE_ROM_KEY secret, which unlocks
+  # rom/sote.z64.gpg; without it this job does nothing. The unlocked ROM and
+  # the code generated from it exist only on the build machine, and the IPA
+  # (which contains that code) is a private artifact kept for one day.
+  game:
+    runs-on: macos-15
+    if: github.event_name != 'pull_request'
+    env:
+      SOTE_ROM_KEY: ${{ secrets.SOTE_ROM_KEY }}
+    steps:
+      - name: Check for the ROM key
+        id: key
+        run: |
+          if [ -n "$SOTE_ROM_KEY" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else
+            echo "::notice::SOTE_ROM_KEY is not set; skipping the game build."; fi
+
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+
+      - name: Submodules
+        if: steps.key.outputs.present == 'true'
+        run: |
+          git submodule update --init --depth 1 third_party/SotE-Recomp
+          git submodule update --init --recursive \
+            third_party/N64Recomp third_party/N64ModernRuntime third_party/rt64 third_party/SDL
+
+      - name: Unlock the ROM
+        if: steps.key.outputs.present == 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/rom"
+          printf '%s' "$SOTE_ROM_KEY" | gpg --batch --quiet --pinentry-mode loopback \
+            --passphrase-fd 0 -d -o "$RUNNER_TEMP/rom/sote.z64" rom/sote.z64.gpg
+          echo "e7085e013123537f34e0edec8801318016da4dbac424172d6dc5f3b67d98642c  $RUNNER_TEMP/rom/sote.z64" \
+            | shasum -a 256 -c -
+
+      - name: Generate the game code
+        if: steps.key.outputs.present == 'true'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet unicorn==2.1.4 xxhash==4.0.1
+          cmake -S third_party/N64Recomp -B "$RUNNER_TEMP/n64recomp" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "$RUNNER_TEMP/n64recomp" --target N64RecompCLI RSPRecomp --parallel
+          cd third_party/SotE-Recomp
+          "$RUNNER_TEMP/venv/bin/python" tools/prepare_recomp_rom.py "$RUNNER_TEMP/rom/sote.z64"
+          "$RUNNER_TEMP/n64recomp/N64Recomp" sote.toml
+          "$RUNNER_TEMP/n64recomp/RSPRecomp" config/aspMain.toml
+          "$RUNNER_TEMP/venv/bin/python" tools/patch_rsp_audio.py
+          rm -f generated/recomp.z64 "$RUNNER_TEMP/rom/sote.z64"
+          ls generated generated/RecompiledFuncs | head -40
+
+      - name: Configure
+        if: steps.key.outputs.present == 'true'
+        run: |
+          cmake -S . -B build -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            "-DSOTE_GENERATED_DIR=$PWD/third_party/SotE-Recomp/generated"
+
+      - name: Build
+        if: steps.key.outputs.present == 'true'
+        run: |
+          set -o pipefail
+          cmake --build build --config Release --target sote -- \
+            -sdk iphoneos -IDEBuildingContinueBuildingAfterErrors=YES \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            2>&1 | tee build.log
+
+      - name: Error summary
+        if: failure() && steps.key.outputs.present == 'true'
+        run: |
+          grep -E "error:|Undefined symbols|ld: " build.log | sort -u | head -100
+
+      - name: Package the game IPA
+        if: steps.key.outputs.present == 'true'
+        run: |
+          app=$(find build -path '*Release-iphoneos/SotE.app' -type d | head -1)
+          test -n "$app"
+          mkdir -p Payload
+          cp -R "$app" Payload/
+          zip -qry SotE-game.ipa Payload
+          ls -l SotE-game.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          name: SotE-game-ipa
+          path: SotE-game.ipa
+          retention-days: 1

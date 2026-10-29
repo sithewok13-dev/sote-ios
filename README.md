@@ -17,7 +17,7 @@ Planning notes live in `jk-files` (branch `wip-sote-ios`).
 | Repo, GPL-3.0 licence, pinned submodules | done |
 | iOS shell: UIKit app, plume on Metal, rdram reservation probe | works on device (0.1.2) |
 | RT64 on iOS: builds, 56 shaders compiled to Metal libraries | builds (0.2.0); not yet run on device |
-| Game layer: SotE-Recomp's code (now MIT) on iOS | in progress: `sote_game` library (0.3.0) |
+| Game layer: SotE-Recomp's code (now MIT) on iOS | compiles for iOS; first playable build pending (0.4.0) |
 | Touch controls (IOSTouch overlay) | later |
 
 The game layer comes from [SotE-Recomp] by GTTeancum, who licensed its original
@@ -83,6 +83,23 @@ first question.
 Result on an iPhone 18 Pro Max, iOS 27.2, sideloaded with Feather (0.1.2,
 2026-10-29): both OK, green. librecomp's memory layout works unchanged; no
 extended-virtual-addressing entitlement is needed.
+
+## Building the playable app
+
+The app needs code generated from the ROM, which can't live in this repo. With
+the owner's agreement (2026-10-29), `rom/sote.z64.gpg` holds their ROM
+encrypted with AES-256 (GnuPG). The `game` CI job unlocks it with the
+`SOTE_ROM_KEY` Actions secret, generates the code (SotE-Recomp's
+`prepare_recomp_rom.py`, N64Recomp, RSPRecomp), deletes the unlocked ROM,
+builds the app with `-DSOTE_GENERATED_DIR=...` and uploads `SotE-game.ipa` as a
+private artifact kept for one day. Without the secret the job is skipped.
+
+On the phone, the game also reads the ROM at run time: copy it to
+**Files > On My iPhone > SotE** as
+`Star Wars - Shadows of the Empire (USA) (Rev 2).z64`.
+
+The IPA contains code made from the game, so it is for the owner's own use and
+must not be shared (see SotE-Recomp's `LICENSES.md`).
 
 ## Building
 

@@ -5,7 +5,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS version")
 endif()
 
-project(SotEiOS VERSION 0.3.0 LANGUAGES C CXX)
+project(SotEiOS VERSION 0.4.0 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
@@ -13,6 +13,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(SOTE_BUNDLE_ID "io.github.sithewok13.sote" CACHE STRING "iOS bundle identifier")
+set(SOTE_GENERATED_DIR "" CACHE PATH
+    "SotE-Recomp generated/ folder made from the ROM; empty builds the self-test app")
 set(SOTE_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/N64ModernRuntime")
 set(SOTE_RT64_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rt64")
 set(SOTE_PLUME_DIR "${SOTE_RT64_DIR}/src/contrib/plume")

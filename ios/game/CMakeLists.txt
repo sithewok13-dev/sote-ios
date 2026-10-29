@@ -64,3 +64,32 @@ target_compile_options(sote_game PRIVATE
     -Wno-deprecated-declarations
 )
 target_link_libraries(sote_game PUBLIC rt64 librecomp ultramodern SDL2-static sote_sandec)
+
+# The ROM-derived part, only when SOTE_GENERATED_DIR points at SotE-Recomp's
+# generated/ folder (made from your ROM by N64Recomp and RSPRecomp). The
+# private "game" CI job does this; normal builds never see it.
+if(SOTE_GENERATED_DIR)
+    file(GLOB rom_sources CONFIGURE_DEPENDS
+        "${SOTE_GENERATED_DIR}/RecompiledFuncs/*.c"
+        "${SOTE_GENERATED_DIR}/RecompiledFuncs/*.cpp")
+    if(NOT rom_sources OR NOT EXISTS "${SOTE_GENERATED_DIR}/aspMain.cpp")
+        message(FATAL_ERROR "${SOTE_GENERATED_DIR} has no generated game code")
+    endif()
+
+    add_library(sote_rom STATIC
+        ${rom_sources}
+        "${SOTE_GENERATED_DIR}/aspMain.cpp"
+        "${sote_src}/register_overlays.cpp")
+    target_include_directories(sote_rom PRIVATE
+        "${SOTE_GENERATED_DIR}/RecompiledFuncs"
+        "${sote_src}"
+        "${SOTE_RUNTIME_DIR}/librecomp/include"
+        "${SOTE_RUNTIME_DIR}/N64Recomp/include")
+    # Same flags SotE-Recomp uses for its recompiled code.
+    target_compile_options(sote_rom PRIVATE
+        "$<$<COMPILE_LANGUAGE:C>:SHELL:-include ${sote_src}/recomp_hooks.h>"
+        -fno-strict-aliasing
+        -w
+        $<$<COMPILE_LANGUAGE:C>:-Wno-implicit-function-declaration>)
+    target_link_libraries(sote_rom PRIVATE librecomp ultramodern)
+endif()

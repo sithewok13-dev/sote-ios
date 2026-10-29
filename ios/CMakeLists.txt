@@ -37,3 +37,11 @@ target_link_libraries(sote PRIVATE
     "-framework Metal"
     "-framework QuartzCore"
 )
+
+# With the ROM-derived code available, the app runs the game instead of the
+# self-test.
+if(TARGET sote_rom)
+    target_compile_definitions(sote PRIVATE SOTE_WITH_GAME=1)
+    target_include_directories(sote PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/game")
+    target_link_libraries(sote PRIVATE sote_game sote_rom)
+endif()

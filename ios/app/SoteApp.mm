@@ -6,6 +6,9 @@
 // The screen is cleared green if both pass, amber if only rendering works.
 // Every step is written to Documents/sote-log.txt (Files app > SotE), so if
 // the app crashes, the log's last line shows where.
+//
+// Built with the game (SOTE_WITH_GAME), it runs the memory check, then starts
+// SotE-Recomp's main() on its own thread once the ROM is in Documents.
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
@@ -19,6 +22,17 @@
 #include "plume_clear.h"
 #include "sote_log.h"
 
+#if SOTE_WITH_GAME
+#include "sote_platform_ios.h"
+
+// The ROM names SotE-Recomp's main() looks for in its data directory.
+static NSArray<NSString *> *const kRomNames = @[
+    @"Star Wars - Shadows of the Empire (USA) (Rev 2).z64",
+    @"Star Wars - Shadows of the Empire (U) (V1.2) [!].z64",
+    @"sote.us.v1.2.z64",
+];
+#endif
+
 @interface SoteMetalView : UIView
 @end
 
@@ -29,6 +43,7 @@
 @end
 
 @interface SoteViewController : UIViewController
+@property (nonatomic) BOOL statusLabelHidden;
 @end
 
 @implementation SoteViewController {
@@ -80,6 +95,10 @@
     sote::log("memory probe: start");
     std::string memoryReport = sote::probe_rdram_reservation(_memoryOk);
     sote::log("%s", memoryReport.c_str());
+#if SOTE_WITH_GAME
+    [self startGameWithMemoryReport:memoryReport];
+    return;
+#endif
     _statusLabel.text = [NSString stringWithFormat:@"Shadows of the Empire (iOS shell)\n%s\nplume: starting...",
         memoryReport.c_str()];
 
@@ -95,6 +114,65 @@
         [_displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
     }
 }
+
+#if SOTE_WITH_GAME
+- (void)startGameWithMemoryReport:(const std::string &)memoryReport {
+    NSURL *documents = [NSFileManager.defaultManager URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask].firstObject;
+    NSString *romName = nil;
+    for (NSString *name in kRomNames) {
+        if ([NSFileManager.defaultManager fileExistsAtPath:[documents URLByAppendingPathComponent:name].path]) {
+            romName = name;
+            break;
+        }
+    }
+
+    if (romName == nil) {
+        sote::log("game: no ROM in Documents");
+        _statusLabel.text = [NSString stringWithFormat:
+            @"Shadows of the Empire\n%s\n\n"
+            @"Copy your ROM into the Files app:\n"
+            @"On My iPhone > SotE\n"
+            @"named: %@\n\n"
+            @"Then close and reopen this app.",
+            memoryReport.c_str(), kRomNames.firstObject];
+        return;
+    }
+
+    sote::log("game: found %s, starting", romName.UTF8String);
+    _statusLabel.text = @"Shadows of the Empire\nstarting...";
+    sote::platform::ios_set_game_view((__bridge void *)_metalView, (__bridge void *)_metalView.layer);
+
+    __weak SoteViewController *weakSelf = self;
+    NSThread *gameThread = [[NSThread alloc] initWithBlock:^{
+        static char programName[] = "SotE";
+        char *argv[] = {programName, nullptr};
+        const int result = sote_main(1, argv);
+        sote::log("game: main returned %d", result);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            SoteViewController *strongSelf = weakSelf;
+            if (strongSelf != nil) {
+                strongSelf->_statusLabel.hidden = NO;
+                strongSelf->_statusLabel.text = [NSString stringWithFormat:
+                    @"Shadows of the Empire\nThe game stopped (code %d).\n"
+                    @"Details: Files > SotE > logs", result];
+            }
+        });
+    }];
+    gameThread.name = @"SotE game";
+    gameThread.stackSize = 16 * 1024 * 1024;
+    gameThread.qualityOfService = NSQualityOfServiceUserInteractive;
+    [gameThread start];
+
+    // RT64 draws over the whole view from here on.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        weakSelf.statusLabelHidden = YES;
+    });
+}
+
+- (void)setStatusLabelHidden:(BOOL)hidden {
+    _statusLabel.hidden = hidden;
+}
+#endif
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
