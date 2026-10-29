@@ -25,6 +25,8 @@
 #if SOTE_WITH_GAME
 #include "rom_import.h"
 #include "sote_platform_ios.h"
+
+static NSString *lastLines(NSURL *file, NSUInteger count);
 #endif
 
 @interface SoteMetalView : UIView
@@ -37,7 +39,6 @@
 @end
 
 @interface SoteViewController : UIViewController
-@property (nonatomic) BOOL statusLabelHidden;
 @end
 
 @implementation SoteViewController {
@@ -47,6 +48,7 @@
     std::unique_ptr<sote::PlumeClear> _renderer;
     bool _memoryOk;
     bool _started;
+    bool _gameStopped;
 }
 
 - (void)loadView {
@@ -136,13 +138,15 @@
         char *argv[] = {programName, nullptr};
         const int result = sote_main(1, argv);
         sote::log("game: main returned %d", result);
+        NSString *errors = lastLines([documents URLByAppendingPathComponent:@"logs/sote-latest-errors.log"], 12);
         dispatch_async(dispatch_get_main_queue(), ^{
             SoteViewController *strongSelf = weakSelf;
             if (strongSelf != nil) {
+                strongSelf->_gameStopped = true;
                 strongSelf->_statusLabel.hidden = NO;
                 strongSelf->_statusLabel.text = [NSString stringWithFormat:
                     @"Shadows of the Empire\nThe game stopped (code %d).\n"
-                    @"Details: Files > SotE > logs", result];
+                    @"Details: Files > SotE > logs\n\n%@", result, errors];
             }
         });
     }];
@@ -153,12 +157,34 @@
 
     // RT64 draws over the whole view from here on.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        weakSelf.statusLabelHidden = YES;
+        SoteViewController *strongSelf = weakSelf;
+        if (strongSelf != nil && !strongSelf->_gameStopped) {
+            strongSelf->_statusLabel.hidden = YES;
+        }
     });
 }
 
-- (void)setStatusLabelHidden:(BOOL)hidden {
-    _statusLabel.hidden = hidden;
+// The last `count` lines of a text file, or an empty string.
+static NSString *lastLines(NSURL *file, NSUInteger count) {
+    NSString *text = [NSString stringWithContentsOfURL:file encoding:NSUTF8StringEncoding error:nil];
+    if (text == nil) {
+        return @"";
+    }
+
+    NSArray<NSString *> *lines = [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+    NSMutableArray<NSString *> *kept = [NSMutableArray array];
+    for (NSString *line in lines.reverseObjectEnumerator) {
+        if (line.length == 0) {
+            continue;
+        }
+
+        [kept insertObject:line atIndex:0];
+        if (kept.count == count) {
+            break;
+        }
+    }
+
+    return [kept componentsJoinedByString:@"\n"];
 }
 #endif
 
