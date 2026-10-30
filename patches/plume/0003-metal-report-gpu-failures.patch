@@ -1,0 +1,43 @@
+diff --git a/plume_metal.cpp b/plume_metal.cpp
+index a12bc3b..136c6ae 100644
+--- a/plume_metal.cpp
++++ b/plume_metal.cpp
+@@ -1244,6 +1244,15 @@ namespace plume {
+         descriptor->setUsage(usage);
+ 
+         this->mtl = device->mtl->newTexture(descriptor);
++        if (this->mtl == nullptr) {
++            static int failureReports = 0;
++            if (failureReports++ < 10) {
++                fprintf(stderr, "[plume] newTexture failed: format=%u %ux%ux%u mips=%u samples=%u usage=0x%lx\n",
++                    unsigned(desc.format), desc.width, desc.height, desc.depth, desc.mipLevels,
++                    unsigned(desc.multisampling.sampleCount), (unsigned long)usage);
++            }
++        }
++
+         device->addResource(mtl);
+ 
+         // Release resources
+@@ -2302,6 +2311,22 @@ namespace plume {
+     }
+ 
+     void MetalCommandList::commit() {
++        // Report GPU-side failures, which Metal otherwise only records on the
++        // command buffer (first few only).
++        mtl->addCompletedHandler([](MTL::CommandBuffer *commandBuffer) {
++            if (commandBuffer->status() != MTL::CommandBufferStatusError) {
++                return;
++            }
++
++            static std::atomic<int> failureReports{0};
++            if (failureReports++ < 10) {
++                NS::Error *error = commandBuffer->error();
++                fprintf(stderr, "[plume] command buffer failed: %s (code %ld)\n",
++                    error != nullptr ? error->localizedDescription()->utf8String() : "unknown error",
++                    error != nullptr ? (long)error->code() : 0L);
++            }
++        });
++
+         mtl->commit();
+         mtl->release();
+         mtl = nullptr;

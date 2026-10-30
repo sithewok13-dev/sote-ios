@@ -56,7 +56,9 @@ upstream commits SotE-Recomp uses.
   `CAMetalLayer.displaySyncEnabled`) that abort on iOS. `0002` lets Metal
   copies read and write swap chain drawables (they were cast to the wrong
   type, crashing SotE-Recomp's pause-menu snapshot) and adds texture-to-buffer
-  copies, which SotE-Recomp's screen capture uses.
+  copies, which SotE-Recomp's screen capture uses. `0003` logs failed
+  command buffers and failed texture creations, which Metal otherwise only
+  records silently.
 - `patches/sote-recomp/`: `0001` ports SotE-Recomp's Windows-only code: its
   window, message pump, crash reports and executable path go behind
   `#ifdef _WIN32` with iOS versions; `main()` becomes `sote_main()`;
