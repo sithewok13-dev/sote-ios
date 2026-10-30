@@ -1,0 +1,155 @@
+diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
+index 30480bb..ed2936c 100644
+--- a/src/hle/rt64_present_queue.cpp
++++ b/src/hle/rt64_present_queue.cpp
+@@ -108,6 +108,108 @@ namespace RT64 {
+                 (state.presentIds[state.nextPresentId] == presentId);
+         }
+ 
++        // iOS diagnostics for the black screen: at the visible-capture
++        // presents, read back the framebuffer the VI pass samples, and clear
++        // the swap chain to magenta, so the captures show which stage is black.
++        struct SourceCapture {
++            std::unique_ptr<RenderBuffer> readbackBuffer;
++            uint64_t presentId = 0;
++            uint32_t width = 0;
++            uint32_t height = 0;
++            uint32_t rowPitch = 0;
++            uint32_t bytesPerPixel = 0;
++        };
++
++        bool isDiagnosticPresent(uint64_t presentId) {
++            const char *presents = std::getenv("SOTE_VISIBLE_CAPTURE_PRESENTS");
++            if (presents == nullptr) {
++                return false;
++            }
++
++            const char *cursor = presents;
++            while (*cursor != '\0') {
++                char *end = nullptr;
++                const unsigned long long value = std::strtoull(cursor, &end, 10);
++                if (end == cursor) {
++                    ++cursor;
++                    continue;
++                }
++
++                if (value == presentId) {
++                    return true;
++                }
++
++                cursor = end;
++            }
++
++            return false;
++        }
++
++        SourceCapture queueSourceCapture(RenderDevice *device, RenderCommandList *commandList, RenderTexture *texture, RenderFormat format,
++            uint32_t width, uint32_t height, uint64_t presentId)
++        {
++            SourceCapture capture;
++            const uint32_t bytesPerPixel = (format == RenderFormat::R16G16B16A16_UNORM) ? 8 : 4;
++            if ((texture == nullptr) || (width == 0) || (height == 0)) {
++                return capture;
++            }
++
++            capture.presentId = presentId;
++            capture.width = width;
++            capture.height = height;
++            capture.bytesPerPixel = bytesPerPixel;
++            capture.rowPitch = ((width * bytesPerPixel + TextureDataPitchAlignment - 1) / TextureDataPitchAlignment) * TextureDataPitchAlignment;
++            capture.readbackBuffer = device->createBuffer(RenderBufferDesc::ReadbackBuffer(uint64_t(capture.rowPitch) * height));
++            commandList->barriers(RenderBarrierStage::COPY, RenderTextureBarrier(texture, RenderTextureLayout::COPY_SOURCE));
++            commandList->copyTextureRegion(
++                RenderTextureCopyLocation::PlacedFootprint(capture.readbackBuffer.get(), format, width, height, 1, capture.rowPitch / bytesPerPixel),
++                RenderTextureCopyLocation::Subresource(texture));
++            return capture;
++        }
++
++        void reportSourceCapture(const SourceCapture &capture) {
++            if (capture.readbackBuffer == nullptr) {
++                return;
++            }
++
++            const uint64_t byteCount = uint64_t(capture.rowPitch) * capture.height;
++            RenderRange readRange = { 0, byteCount };
++            const uint8_t *data = reinterpret_cast<const uint8_t *>(capture.readbackBuffer->map(0, &readRange));
++            if (data == nullptr) {
++                std::printf("[ios][source-capture] present=%llu map failed\n", static_cast<unsigned long long>(capture.presentId));
++                std::fflush(stdout);
++                return;
++            }
++
++            // Count pixels whose color channels are not all zero, and sum the
++            // high byte of each channel to get a rough average.
++            uint64_t lit = 0;
++            uint64_t sum[4] = {};
++            const uint32_t highByte = (capture.bytesPerPixel == 8) ? 1 : 0;
++            const uint32_t channelSize = capture.bytesPerPixel / 4;
++            for (uint32_t y = 0; y < capture.height; y++) {
++                const uint8_t *row = data + uint64_t(y) * capture.rowPitch;
++                for (uint32_t x = 0; x < capture.width; x++) {
++                    const uint8_t *pixel = row + x * capture.bytesPerPixel;
++                    bool any = false;
++                    for (uint32_t c = 0; c < 4; c++) {
++                        const uint8_t value = pixel[c * channelSize + highByte];
++                        sum[c] += value;
++                        any = any || ((c < 3) && (value != 0));
++                    }
++
++                    lit += any ? 1 : 0;
++                }
++            }
++
++            capture.readbackBuffer->unmap();
++            const double pixels = double(capture.width) * double(capture.height);
++            std::printf("[ios][source-capture] present=%llu size=%ux%u bpp=%u lit=%.3f%% avg_rgba=%.1f,%.1f,%.1f,%.1f\n",
++                static_cast<unsigned long long>(capture.presentId), capture.width, capture.height, capture.bytesPerPixel,
++                double(lit) * 100.0 / pixels, sum[0] / pixels, sum[1] / pixels, sum[2] / pixels, sum[3] / pixels);
++            std::fflush(stdout);
++        }
++
+         VisibleCapture queueVisibleCapture(
+             RenderDevice *device,
+             RenderCommandList *commandList,
+@@ -577,8 +679,32 @@ namespace RT64 {
+                     }
+                 }
+                 
++                const bool diagnosticPresent = isDiagnosticPresent(present.presentId);
++                SourceCapture sourceCapture;
++                if (diagnosticPresent) {
++                    std::printf("[ios][present] present=%llu color_target=%s texture=%s size=%ux%u scale=%.2fx%.2f format=%d draw_hook=%s vi_visible=%d\n",
++                        static_cast<unsigned long long>(present.presentId),
++                        (colorTarget != nullptr) ? "yes" : "no",
++                        (renderParams.texture != nullptr) ? "yes" : "no",
++                        renderParams.textureWidth, renderParams.textureHeight,
++                        float(renderParams.resolutionScale[0]), float(renderParams.resolutionScale[1]),
++                        int(renderParams.textureFormat),
++                        (GetRenderHookDraw() != nullptr) ? "yes" : "no",
++                        present.screenVI.visible() ? 1 : 0);
++                    std::fflush(stdout);
++                    if (renderParams.texture != nullptr) {
++                        sourceCapture = queueSourceCapture(ext.device, commandList, renderParams.texture, renderParams.textureFormat,
++                            renderParams.textureWidth, renderParams.textureHeight, present.presentId);
++                    }
++                }
++
+                 commandList->setFramebuffer(swapChainFramebuffer);
+-                commandList->clearColor(0, RenderColor(0.0f, 0.0f, 0.0f, 1.0f));
++                if (diagnosticPresent) {
++                    commandList->clearColor(0, RenderColor(1.0f, 0.0f, 1.0f, 1.0f));
++                }
++                else {
++                    commandList->clearColor(0, RenderColor(0.0f, 0.0f, 0.0f, 1.0f));
++                }
+ 
+                 if (renderParams.texture != nullptr) {
+                     commandList->barriers(RenderBarrierStage::GRAPHICS, RenderTextureBarrier(renderParams.texture, RenderTextureLayout::SHADER_READ));
+@@ -628,6 +754,7 @@ namespace RT64 {
+                     ext.presentGraphicsWorker->commandQueue->executeCommandLists(&commandList, 1, &waitSemaphore, 1, &signalSemaphore, 1, ext.presentGraphicsWorker->commandFence.get());
+                     ext.presentGraphicsWorker->wait();
+                     writeVisibleCapture(visibleCapture);
++                    reportSourceCapture(sourceCapture);
+                 }
+             }
+ 

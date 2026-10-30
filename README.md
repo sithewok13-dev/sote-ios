@@ -51,6 +51,9 @@ upstream commits SotE-Recomp uses.
   tools, and has `spirv_cross_msl` emit iOS Metal.
   `0002` logs RT64's present path (swap chain resize, empty swap chain,
   failed acquire or present) while the game shows a black screen.
+  `0003` adds to that: at the captured frames it reads back the image the
+  VI pass draws from and clears the screen to magenta first, to show which
+  stage is black.
 - `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
   configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
   `CAMetalLayer.displaySyncEnabled`) that abort on iOS. `0002` lets Metal
