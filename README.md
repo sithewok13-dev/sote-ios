@@ -54,6 +54,8 @@ upstream commits SotE-Recomp uses.
   `0003` adds to that: at the captured frames it reads back the image the
   VI pass draws from and clears the screen to magenta first, to show which
   stage is black.
+  `0004` tints every draw magenta through RT64's per-draw buffer
+  (`SOTE_DEBUG_HIGHLIGHT`), to check the shaders read it on iOS.
 - `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
   configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
   `CAMetalLayer.displaySyncEnabled`) that abort on iOS. `0002` lets Metal
