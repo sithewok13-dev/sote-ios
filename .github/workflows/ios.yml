@@ -5,8 +5,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+# A newer push makes an unfinished run pointless; macOS minutes are costly.
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # The ROM-free self-test app, for device and simulator. Only on demand and
+  # for pull requests now: the game job below builds everything it does.
   build:
+    if: github.event_name != 'push'
     runs-on: macos-15
     strategy:
       fail-fast: false
