@@ -5,7 +5,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "iOS" AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "16.0" CACHE STRING "Minimum iOS version")
 endif()
 
-project(SotEiOS VERSION 0.5.6 LANGUAGES C CXX)
+project(SotEiOS VERSION 0.5.7 LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD 20)
@@ -61,6 +61,7 @@ endforeach()
 
 # Our iOS port of SotE-Recomp's game layer (see ios/game).
 file(GLOB sote_port_patches "${CMAKE_CURRENT_SOURCE_DIR}/patches/sote-recomp/*.patch")
+list(SORT sote_port_patches)
 foreach(patch IN LISTS sote_port_patches)
     sote_apply_patch("${SOTE_RECOMP_DIR}" "${patch}")
 endforeach()

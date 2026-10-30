@@ -64,6 +64,8 @@ upstream commits SotE-Recomp uses.
   `#ifdef _WIN32` with iOS versions; `main()` becomes `sote_main()`;
   `menu_renderer.cpp` gains Metal shaders; `rt64_renderer.cpp` passes the
   Metal view to RT64.
+  `0002` lets the app force SotE-Recomp's compatibility graphics profile
+  (no MSAA, standard color), to test whether those cause the black screen.
 - `ios/game/`: the `sote_game` library: SotE-Recomp's game code plus
   `sote_platform_ios.mm` (Documents folder, Metal view, keyboard stub) and
   `sote_win32_compat.h` (the few Win32 names it uses elsewhere: key codes,

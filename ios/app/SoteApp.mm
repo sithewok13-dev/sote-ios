@@ -142,6 +142,9 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
         NSString *captures = [documents URLByAppendingPathComponent:@"captures"].path;
         setenv("SOTE_VISIBLE_CAPTURE_PATH", captures.fileSystemRepresentation, 1);
         setenv("SOTE_VISIBLE_CAPTURE_PRESENTS", "300,1200", 1);
+        // Run RT64 without 4x MSAA and high-precision color, the likeliest
+        // causes of the black screen (no GPU errors are reported).
+        setenv("SOTE_FORCE_COMPATIBILITY", "1", 1);
         static char programName[] = "SotE";
         char *argv[] = {programName, nullptr};
         const int result = sote_main(1, argv);

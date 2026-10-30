@@ -1,0 +1,18 @@
+diff --git a/src/rt64_renderer.cpp b/src/rt64_renderer.cpp
+index 29a4bfe..c6eebd8 100644
+--- a/src/rt64_renderer.cpp
++++ b/src/rt64_renderer.cpp
+@@ -256,6 +256,13 @@ public:
+         app->loadConfiguration();
+         normal_config = app->userConfig;
+         compatibility_active = sote::graphics_menu::compatibility_enabled();
++#ifndef _WIN32
++        // iOS: RT64's 4x MSAA or high-precision color may draw black on Apple
++        // GPUs; the host can force the compatibility profile to check.
++        if (std::getenv("SOTE_FORCE_COMPATIBILITY") != nullptr) {
++            compatibility_active = true;
++        }
++#endif
+         apply_compatibility_profile();
+         const bool use_configuration_file = app->appConfig.useConfigurationFile;
+         app->appConfig.useConfigurationFile = false; // Already loaded above.
