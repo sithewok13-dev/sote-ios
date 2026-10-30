@@ -1,0 +1,93 @@
+diff --git a/plume_metal.cpp b/plume_metal.cpp
+index 6cc309b..a12bc3b 100644
+--- a/plume_metal.cpp
++++ b/plume_metal.cpp
+@@ -2996,8 +2996,10 @@ namespace plume {
+         checkActiveBlitEncoder();
+         activeType = EncoderType::Blit;
+ 
+-        const MetalTexture *dstTexture = static_cast<const MetalTexture *>(dstLocation.texture);
+-        const MetalTexture *srcTexture = static_cast<const MetalTexture *>(srcLocation.texture);
++        // Either side may be a swap chain drawable, which is not a MetalTexture:
++        // reach the MTLTexture through ExtendedRenderTexture::getTexture().
++        const ExtendedRenderTexture *dstTexture = static_cast<const ExtendedRenderTexture *>(dstLocation.texture);
++        const ExtendedRenderTexture *srcTexture = static_cast<const ExtendedRenderTexture *>(srcLocation.texture);
+         const MetalBuffer *dstBuffer = static_cast<const MetalBuffer *>(dstLocation.buffer);
+         const MetalBuffer *srcBuffer = static_cast<const MetalBuffer *>(srcLocation.buffer);
+ 
+@@ -3025,12 +3027,44 @@ namespace plume {
+                 bytesPerRow,
+                 bytesPerImage,
+                 size,
+-                dstTexture->mtl,
++                dstTexture->getTexture(),
+                 dstLocation.subresource.arrayIndex,
+                 dstLocation.subresource.mipLevel,
+                 dstOrigin
+             );
+             activeBlitEncoder->popDebugGroup();
++        } else if (dstLocation.type == RenderTextureCopyType::PLACED_FOOTPRINT && srcLocation.type == RenderTextureCopyType::SUBRESOURCE) {
++            // Texture to buffer (readback), e.g. of a presented swap chain image.
++            assert(dstBuffer != nullptr);
++            assert(srcTexture != nullptr);
++
++            const RenderFormat format = dstLocation.placedFootprint.format;
++            const uint32_t blockWidth = RenderFormatBlockWidth(format);
++            const uint32_t horizontalBlocks = (dstLocation.placedFootprint.rowWidth + blockWidth - 1) / blockWidth;
++            const uint32_t verticalBlocks = (dstLocation.placedFootprint.height + blockWidth - 1) / blockWidth;
++            const uint32_t bytesPerRow = horizontalBlocks * RenderFormatSize(format);
++            const uint32_t bytesPerImage = bytesPerRow * verticalBlocks;
++
++            MTL::Origin srcOrigin = { 0, 0, 0 };
++            MTL::Size size = { dstLocation.placedFootprint.width, dstLocation.placedFootprint.height, dstLocation.placedFootprint.depth };
++            if (srcBox != nullptr) {
++                srcOrigin = { NS::UInteger(srcBox->left), NS::UInteger(srcBox->top), NS::UInteger(srcBox->front) };
++                size = { NS::UInteger(srcBox->right - srcBox->left), NS::UInteger(srcBox->bottom - srcBox->top), NS::UInteger(srcBox->back - srcBox->front) };
++            }
++
++            activeBlitEncoder->pushDebugGroup(MTLSTR("CopyTextureToBuffer"));
++            activeBlitEncoder->copyFromTexture(
++                srcTexture->getTexture(),
++                srcLocation.subresource.arrayIndex,
++                srcLocation.subresource.mipLevel,
++                srcOrigin,
++                size,
++                dstBuffer->mtl,
++                dstLocation.placedFootprint.offset,
++                bytesPerRow,
++                bytesPerImage
++            );
++            activeBlitEncoder->popDebugGroup();
+         } else {
+             assert(dstTexture != nullptr);
+             assert(srcTexture != nullptr);
+@@ -3049,12 +3083,12 @@ namespace plume {
+             const MTL::Origin dstOrigin = { dstX, dstY, dstZ };
+ 
+             activeBlitEncoder->copyFromTexture(
+-                srcTexture->mtl,                    // source texture
++                srcTexture->getTexture(),           // source texture
+                 srcLocation.subresource.arrayIndex, // source slice (baseArrayLayer)
+                 srcLocation.subresource.mipLevel,   // source mipmap level
+                 srcOrigin,                          // source origin
+                 size,                               // copy size
+-                dstTexture->mtl,                    // destination texture
++                dstTexture->getTexture(),           // destination texture
+                 dstLocation.subresource.arrayIndex, // destination slice (baseArrayLayer)
+                 dstLocation.subresource.mipLevel,   // destination mipmap level
+                 dstOrigin                           // destination origin
+@@ -3088,10 +3122,11 @@ namespace plume {
+         checkActiveBlitEncoder();
+         activeType = EncoderType::Blit;
+ 
+-        const MetalTexture *dst = static_cast<const MetalTexture *>(dstTexture);
+-        const MetalTexture *src = static_cast<const MetalTexture *>(srcTexture);
++        // Either side may be a swap chain drawable, which is not a MetalTexture.
++        const ExtendedRenderTexture *dst = static_cast<const ExtendedRenderTexture *>(dstTexture);
++        const ExtendedRenderTexture *src = static_cast<const ExtendedRenderTexture *>(srcTexture);
+ 
+-        activeBlitEncoder->copyFromTexture(src->mtl, dst->mtl);
++        activeBlitEncoder->copyFromTexture(src->getTexture(), dst->getTexture());
+     }
+ 
+     void MetalCommandList::resolveTexture(const RenderTexture *dstTexture, const RenderTexture *srcTexture) {

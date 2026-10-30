@@ -53,7 +53,10 @@ upstream commits SotE-Recomp uses.
   failed acquire or present) while the game shows a black screen.
 - `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
   configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
-  `CAMetalLayer.displaySyncEnabled`) that abort on iOS.
+  `CAMetalLayer.displaySyncEnabled`) that abort on iOS. `0002` lets Metal
+  copies read and write swap chain drawables (they were cast to the wrong
+  type, crashing SotE-Recomp's pause-menu snapshot) and adds texture-to-buffer
+  copies, which SotE-Recomp's screen capture uses.
 - `patches/sote-recomp/`: `0001` ports SotE-Recomp's Windows-only code: its
   window, message pump, crash reports and executable path go behind
   `#ifdef _WIN32` with iOS versions; `main()` becomes `sote_main()`;
