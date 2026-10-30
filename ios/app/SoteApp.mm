@@ -130,13 +130,18 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
 
     sote::log("game: ROM ready, starting");
     _statusLabel.text = @"Shadows of the Empire\nstarting...";
+    // Lets RT64 read back what it presents (for the capture above).
+    ((CAMetalLayer *)_metalView.layer).framebufferOnly = NO;
     sote::platform::ios_set_game_view((__bridge void *)_metalView, (__bridge void *)_metalView.layer);
 
     __weak SoteViewController *weakSelf = self;
     NSThread *gameThread = [[NSThread alloc] initWithBlock:^{
         // Diagnostics while the game shows a black screen: SotE-Recomp's RT64
-        // patch prints one line per drawn frame saying what it presented.
-        setenv("SOTE_TRACE_PRESENT_SOURCE", "1", 1);
+        // patch saves the image it presents at these frames to
+        // Documents/captures and logs how much of it is black.
+        NSString *captures = [documents URLByAppendingPathComponent:@"captures"].path;
+        setenv("SOTE_VISIBLE_CAPTURE_PATH", captures.fileSystemRepresentation, 1);
+        setenv("SOTE_VISIBLE_CAPTURE_PRESENTS", "300,1200", 1);
         static char programName[] = "SotE";
         char *argv[] = {programName, nullptr};
         const int result = sote_main(1, argv);
