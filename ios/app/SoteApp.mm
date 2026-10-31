@@ -277,6 +277,16 @@ static void logUncaughtException(NSException *exception) {
 @end
 
 int main(int argc, char *argv[]) {
+#if SOTE_WITH_GAME
+    // Black screen diagnostics: Metal's API and shader validation, read when
+    // the device is created. A validation error aborts the app, so the crash
+    // report names it; shader faults fail their command buffer, which plume
+    // logs.
+    setenv("MTL_DEBUG_LAYER", "1", 1);
+    setenv("MTL_DEBUG_LAYER_ERROR_MODE", "assert", 1);
+    setenv("MTL_DEBUG_LAYER_WARNING_MODE", "nslog", 1);
+    setenv("MTL_SHADER_VALIDATION", "1", 1);
+#endif
     @autoreleasepool {
         return UIApplicationMain(argc, argv, nil, NSStringFromClass([SoteAppDelegate class]));
     }
