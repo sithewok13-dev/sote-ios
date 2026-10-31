@@ -162,12 +162,16 @@ diff --git a/src/tools/spirv_cross_msl/spirv_cross_msl.cpp b/src/tools/spirv_cro
 index 2ddad6e..96863bf 100644
 --- a/src/tools/spirv_cross_msl/spirv_cross_msl.cpp
 +++ b/src/tools/spirv_cross_msl/spirv_cross_msl.cpp
-@@ -128,6 +128,9 @@ int main(int argc, char* argv[]) {
+@@ -128,6 +128,13 @@ int main(int argc, char* argv[]) {
          spirv_cross::CompilerMSL::Options msl_options;
          msl_options.msl_version = spirv_cross::CompilerMSL::Options::make_msl_version(2, 1);
          msl_options.argument_buffers = true;
 +#ifdef RT64_MSL_PLATFORM_IOS
 +        msl_options.platform = spirv_cross::CompilerMSL::Options::iOS;
++        // plume binds every resource through Tier 2 argument buffers (A13 and
++        // later). At Tier 1, SPIRV-Cross moves writable textures out of them
++        // into slots plume never binds, so compute writes would be lost.
++        msl_options.argument_buffers_tier = spirv_cross::CompilerMSL::Options::ArgumentBuffersTier::Tier2;
 +#endif
          msl_options.texture_buffer_native = true;
          msl_options.enable_decoration_binding = true;

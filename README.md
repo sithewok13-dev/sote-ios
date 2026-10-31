@@ -48,7 +48,10 @@ upstream commits SotE-Recomp uses.
 - `patches/rt64/`: `0001` makes RT64 build for iOS: keeps the iOS deployment
   target, compiles Metal shaders for `iphoneos`/`iphonesimulator`, uses the host
   tools and our SDL, drops the desktop file dialog (nfd), IOKit and the texture
-  tools, and has `spirv_cross_msl` emit iOS Metal.
+  tools, and has `spirv_cross_msl` emit iOS Metal with Tier 2 argument
+  buffers (at Tier 1 it moves writable textures out of the argument buffers
+  into slots plume never binds, so every compute shader writing a texture,
+  RT64's texture decoder included, wrote nothing: the black screen).
   `0002` logs RT64's present path (swap chain resize, empty swap chain,
   failed acquire or present) while the game shows a black screen.
   `0003` adds to that: at the captured frames it reads back the image the
