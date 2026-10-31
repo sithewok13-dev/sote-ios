@@ -67,6 +67,9 @@ upstream commits SotE-Recomp uses.
   on iOS, so it logs that and retries with the view clamped.
   `0005` also logs the details of a failed command buffer (with shader
   validation on, the failing function and resource).
+  `0006` keeps resources alive while the GPU still uses them on iOS
+  (retained command buffers, no residency sets): 0.6.0 hit a GPU page fault
+  after a few minutes, after which iOS ignores all of the app's GPU work.
 - `patches/sote-recomp/`: `0001` ports SotE-Recomp's Windows-only code: its
   window, message pump, crash reports and executable path go behind
   `#ifdef _WIN32` with iOS versions; `main()` becomes `sote_main()`;
@@ -125,7 +128,9 @@ not cover ROM-derived code or the game's names, art and media.
    **Files > On My iPhone > SotE**: a `.z64`, `.v64` or `.n64` file under any
    name, or a `.zip` with one inside. The app converts it to
    `sote.us.v1.2.z64` on first launch and checks it is the right game.
-3. Open SotE. A game controller works now; touch controls come later.
+3. Open SotE. A game controller works. Until touch controls exist, a tap on
+   the screen presses Start (begin, pause, skip the story screens), and a
+   two-finger tap shows the game's log.
 
 If anything goes wrong, `sote-log.txt` and the `logs` folder in the same
 place say what happened.

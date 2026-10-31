@@ -161,12 +161,17 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
     gameThread.qualityOfService = NSQualityOfServiceUserInteractive;
     [gameThread start];
 
-    // Until the game is known to draw, show the game's own log live over the
-    // view, so a screenshot shows where it got to. Tap to hide or show it.
+    // A tap presses Start (begin the game, pause, skip story screens) until
+    // touch controls exist. A two-finger tap shows or hides the game's log
+    // over the view.
     _statusLabel.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
     _statusLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+    _statusLabel.hidden = YES;
     _metalView.userInteractionEnabled = YES;
-    [_metalView addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleLog)]];
+    [_metalView addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(pressStart)]];
+    UITapGestureRecognizer *twoFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleLog)];
+    twoFingerTap.numberOfTouchesRequired = 2;
+    [_metalView addGestureRecognizer:twoFingerTap];
     NSURL *logs = [documents URLByAppendingPathComponent:@"logs"];
     [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
         SoteViewController *strongSelf = weakSelf;
@@ -175,10 +180,14 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
             return;
         }
 
-        strongSelf->_statusLabel.text = [NSString stringWithFormat:@"SotE log (tap to hide)\n%@\n-- errors --\n%@",
+        strongSelf->_statusLabel.text = [NSString stringWithFormat:@"SotE log (two-finger tap to hide)\n%@\n-- errors --\n%@",
             lastLines([logs URLByAppendingPathComponent:@"sote-latest.log"], 10),
             lastLines([logs URLByAppendingPathComponent:@"sote-latest-errors.log"], 10)];
     }];
+}
+
+- (void)pressStart {
+    sote::platform::ios_press_start();
 }
 
 - (void)toggleLog {
@@ -272,12 +281,6 @@ static void logUncaughtException(NSException *exception) {
 @end
 
 int main(int argc, char *argv[]) {
-#if SOTE_WITH_GAME
-    // Diagnostics for the GPU address fault seen in 0.6.0: Metal's shader
-    // validation, read when the device is created, makes a faulting shader
-    // fail its command buffer with details plume logs.
-    setenv("MTL_SHADER_VALIDATION", "1", 1);
-#endif
     @autoreleasepool {
         return UIApplicationMain(argc, argv, nil, NSStringFromClass([SoteAppDelegate class]));
     }
