@@ -134,18 +134,21 @@ not cover ROM-derived code or the game's names, art and media.
    `sote.us.v1.2.z64` on first launch and checks it is the right game.
 3. Open SotE. The on-screen controls follow the house style of the other
    ports (`jk-files` docs/HOUSE_STYLE.md, section 3):
-   - a floating stick in the lower left; drag anywhere else to look;
+   - a floating stick in the lower left (hidden until your thumb lands);
+     drag anywhere else to look. CONTROLS in the tray picks Modern (the
+     default: move and strafe, look separately, like the other ports) or
+     Classic (the N64's own turn-and-walk);
    - A, B and the C buttons on the right, Z under L, L and R at the top;
    - START at the bottom: tap for Start (begin, pause, skip story screens);
-     hold 0.45 s (a ring fills) for the tray: GYRO (off / while touching /
-     always), SENS, OPACITY (slider; hold to reset), CAM, CHEAT, DPAD, LOG;
-   - CAMERA (top row): tap for a photo, slide sideways for a burst (every
+     hold 0.45 s (its border fills) for the tray: CONTROLS, GYRO (off /
+     while touching / always), SENS, OPACITY (slider; hold to reset),
+     CAMERA, CHEAT, LEVEL SELECT (cheat on), D-PAD, LOG;
+   - CAMERA (top middle, beside CHEAT): tap for a photo, slide sideways for a burst (every
      0.2 s, up to 10). Photos go to your library, or to Files > SotE >
      Screenshots without access;
    - CHEAT (shown from the tray): hold 0.5 s to switch infinite health,
      lives, ammo, missiles and vehicle health; it plays a random clip from
      Files > SotE > Cheat Sounds (your own clips);
-   - LVL (with the cheat on): jump to any of the ten levels.
    A game controller works too.
 
 If anything goes wrong, `sote-log.txt` and the `logs` folder in the same

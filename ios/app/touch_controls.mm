@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "controls_menu.hpp"
 #include "ios_cheat.h"
 #include "ios_photos.h"
 #include "sote_platform_ios.h"
@@ -44,7 +45,7 @@ namespace {
     constexpr double StartPulse = 0.15;
     constexpr CGFloat HoldMoveLimit = 12.0;
     constexpr CGFloat TrayRadius = 20.0;
-    constexpr CGFloat TrayStep = 50.0;
+    constexpr CGFloat TrayStep = 80.0;
     constexpr CGFloat BurstSlide = 10.0;
     constexpr double BurstPeriod = 0.2;
     constexpr int BurstMax = 10;
@@ -57,7 +58,7 @@ namespace {
     constexpr double GyroSens[] = { 1.0, 1.5, 2.0, 3.0 };
 
     enum class Kind { N64, Menu, Cheat, Camera, Level, Tray };
-    enum class TrayItem { None, Gyro, Sens, Opacity, Camera, Cheat, Dpad, Log };
+    enum class TrayItem { None, Gyro, Sens, Opacity, Controls, Camera, Cheat, Level, Dpad, Log };
     enum class GyroMode { Off = 0, Touch = 1, Always = 2 };
     enum class Role { None, Stick, Look, Control };
 
@@ -167,6 +168,7 @@ namespace {
     bool _cheatOn;
     bool _showCamera;
     bool _showDpad;
+    bool _classicControls;
     int _photosPending;
     int _photosToPhotos;
     int _photosToFiles;
@@ -206,14 +208,15 @@ namespace {
         { Kind::Menu, 0, TrayItem::None, @"START", red, 22, true },
         { Kind::Camera, 0, TrayItem::None, @"", white, 22, false },
         { Kind::Cheat, 0, TrayItem::None, @"", white, 22, false },
-        { Kind::Level, 0, TrayItem::None, @"LVL", Gold(), 22, false },
-        { Kind::Tray, 0, TrayItem::Gyro, @"GYRO", white, TrayRadius, false },
-        { Kind::Tray, 0, TrayItem::Sens, @"SENS", white, TrayRadius, false },
-        { Kind::Tray, 0, TrayItem::Opacity, @"OPAC", white, TrayRadius, false },
-        { Kind::Tray, 0, TrayItem::Camera, @"CAM", white, TrayRadius, false },
-        { Kind::Tray, 0, TrayItem::Cheat, @"CHEAT", white, TrayRadius, false },
-        { Kind::Tray, 0, TrayItem::Dpad, @"DPAD", white, TrayRadius, false },
-        { Kind::Tray, 0, TrayItem::Log, @"LOG", white, TrayRadius, false },
+        { Kind::Tray, 0, TrayItem::Controls, @"", white, TrayRadius, true },
+        { Kind::Tray, 0, TrayItem::Gyro, @"", white, TrayRadius, true },
+        { Kind::Tray, 0, TrayItem::Sens, @"", white, TrayRadius, true },
+        { Kind::Tray, 0, TrayItem::Opacity, @"", white, TrayRadius, true },
+        { Kind::Tray, 0, TrayItem::Camera, @"", white, TrayRadius, true },
+        { Kind::Tray, 0, TrayItem::Cheat, @"", white, TrayRadius, true },
+        { Kind::Tray, 0, TrayItem::Level, @"", Gold(), TrayRadius, true },
+        { Kind::Tray, 0, TrayItem::Dpad, @"", white, TrayRadius, true },
+        { Kind::Tray, 0, TrayItem::Log, @"", white, TrayRadius, true },
     };
 
     _trayBacking = [[UIView alloc] init];
@@ -291,6 +294,7 @@ namespace {
         @"iosTouchCheatOn": @NO,
         @"iosTouchShowCamera": @YES,
         @"iosTouchShowDpad": @NO,
+        @"iosTouchClassicControls": @NO,
     }];
     gyroMode.store(int([defaults integerForKey:@"iosTouchGyroMode"]) % 3);
     gyroSensIndex.store(int([defaults integerForKey:@"iosTouchGyroSens"]) % 4);
@@ -299,6 +303,7 @@ namespace {
     _cheatOn = _showCheat && [defaults boolForKey:@"iosTouchCheatOn"];
     _showCamera = [defaults boolForKey:@"iosTouchShowCamera"];
     _showDpad = [defaults boolForKey:@"iosTouchShowDpad"];
+    _classicControls = [defaults boolForKey:@"iosTouchClassicControls"];
 }
 
 - (void)saveSettings {
@@ -310,6 +315,7 @@ namespace {
     [defaults setBool:_cheatOn forKey:@"iosTouchCheatOn"];
     [defaults setBool:_showCamera forKey:@"iosTouchShowCamera"];
     [defaults setBool:_showDpad forKey:@"iosTouchShowDpad"];
+    [defaults setBool:_classicControls forKey:@"iosTouchClassicControls"];
 }
 
 - (CATextLayer *)textLayer:(CGFloat)size {
@@ -375,7 +381,7 @@ namespace {
     int trayIndex = 0;
     int trayCount = 0;
     for (const Control &control : _controls) {
-        trayCount += (control.kind == Kind::Tray) ? 1 : 0;
+        trayCount += ((control.kind == Kind::Tray) && [self trayItemAvailable:control.tray]) ? 1 : 0;
     }
 
     for (Control &control : _controls) {
@@ -401,19 +407,22 @@ namespace {
                 }
                 break;
             case Kind::Menu: control.center = CGPointMake(midX, bottom - 16); break;
-            case Kind::Camera: control.center = CGPointMake(right - 120, top + 30); break;
-            case Kind::Cheat: control.center = CGPointMake(right - 172, top + 30); break;
-            case Kind::Level: control.center = CGPointMake(right - 224, top + 30); break;
+            // CHEAT and CAMERA sit either side of the top middle.
+            case Kind::Cheat: control.center = CGPointMake(midX - 32, top + 30); break;
+            case Kind::Camera: control.center = CGPointMake(midX + 32, top + 30); break;
+            case Kind::Level: break;
             case Kind::Tray:
-                control.center = CGPointMake(midX + (trayIndex - (trayCount - 1) / 2.0) * TrayStep, trayY);
-                trayIndex++;
+                if ([self trayItemAvailable:control.tray]) {
+                    control.center = CGPointMake(midX + (trayIndex - (trayCount - 1) / 2.0) * TrayStep, trayY);
+                    trayIndex++;
+                }
                 break;
         }
 
         [self shapeControl:control];
     }
 
-    _trayBacking.frame = CGRectMake(midX - (trayCount * TrayStep) / 2.0 - 6, trayY - 26, trayCount * TrayStep + 12, 52);
+    _trayBacking.frame = CGRectMake(midX - (trayCount * TrayStep) / 2.0 - 4, trayY - 26, trayCount * TrayStep + 8, 52);
     _opacityRow.center = CGPointMake(midX, trayY - 56);
     _toast.frame = CGRectMake(midX - 140, top + 50, 280, 30);
     _flash.frame = self.bounds;
@@ -440,9 +449,23 @@ namespace {
     control.shape.path = (control.pill ?
         [UIBezierPath bezierPathWithRoundedRect:CGRectInset(bounds, 0.75, 0.75) cornerRadius:bounds.size.height / 2] :
         [UIBezierPath bezierPathWithOvalInRect:CGRectInset(bounds, 0.75, 0.75)]).CGPath;
-    const CGFloat ringRadius = std::max(bounds.size.width, bounds.size.height) / 2 + 2.5;
-    control.ring.path = [UIBezierPath bezierPathWithArcCenter:CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds))
-        radius:ringRadius startAngle:-M_PI_2 endAngle:3 * M_PI_2 clockwise:YES].CGPath;
+    // The hold indicator fills the button's own border, starting at the top.
+    if (control.pill) {
+        const CGRect r = CGRectInset(bounds, 0.75, 0.75);
+        const CGFloat radius = r.size.height / 2;
+        UIBezierPath *border = [UIBezierPath bezierPath];
+        [border moveToPoint:CGPointMake(CGRectGetMidX(r), CGRectGetMinY(r))];
+        [border addLineToPoint:CGPointMake(CGRectGetMaxX(r) - radius, CGRectGetMinY(r))];
+        [border addArcWithCenter:CGPointMake(CGRectGetMaxX(r) - radius, CGRectGetMidY(r)) radius:radius startAngle:-M_PI_2 endAngle:M_PI_2 clockwise:YES];
+        [border addLineToPoint:CGPointMake(CGRectGetMinX(r) + radius, CGRectGetMaxY(r))];
+        [border addArcWithCenter:CGPointMake(CGRectGetMinX(r) + radius, CGRectGetMidY(r)) radius:radius startAngle:M_PI_2 endAngle:3 * M_PI_2 clockwise:YES];
+        [border closePath];
+        control.ring.path = border.CGPath;
+    }
+    else {
+        control.ring.path = [UIBezierPath bezierPathWithArcCenter:CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds))
+            radius:control.radius - 0.75 startAngle:-M_PI_2 endAngle:3 * M_PI_2 clockwise:YES].CGPath;
+    }
     const CGFloat textHeight = control.text.fontSize * 1.25;
     control.text.frame = CGRectMake(0, (bounds.size.height - textHeight) / 2, bounds.size.width, textHeight);
 
@@ -517,10 +540,15 @@ namespace {
         case Kind::Camera: return _showCamera;
         case Kind::Cheat: return _showCheat;
         case Kind::Level: return _showCheat && _cheatOn;
-        case Kind::Tray: return _trayOpen;
+        case Kind::Tray: return _trayOpen && [self trayItemAvailable:control.tray];
     }
 
     return false;
+}
+
+// LEVEL is in the tray only while the cheat is on.
+- (bool)trayItemAvailable:(TrayItem)item {
+    return (item != TrayItem::Level) || (_showCheat && _cheatOn);
 }
 
 - (bool)trayItemOn:(TrayItem)item {
@@ -540,10 +568,12 @@ namespace {
         case TrayItem::Gyro:
             return (_motion.deviceMotionAvailable ? gyroNames[gyroMode.load()] : @"NO\nGYRO");
         case TrayItem::Sens: return [NSString stringWithFormat:@"SENS\n%.1fx", GyroSens[gyroSensIndex.load()]];
-        case TrayItem::Opacity: return [NSString stringWithFormat:@"OPAC\n%d%%", int(std::lround(_opacity * 100))];
-        case TrayItem::Camera: return @"CAM";
-        case TrayItem::Cheat: return @"CHEAT";
-        case TrayItem::Dpad: return @"DPAD";
+        case TrayItem::Opacity: return [NSString stringWithFormat:@"OPACITY\n%d%%", int(std::lround(_opacity * 100))];
+        case TrayItem::Controls: return _classicControls ? @"CONTROLS\nCLASSIC" : @"CONTROLS\nMODERN";
+        case TrayItem::Camera: return _showCamera ? @"CAMERA\nON" : @"CAMERA\nOFF";
+        case TrayItem::Cheat: return _showCheat ? @"CHEAT\nON" : @"CHEAT\nOFF";
+        case TrayItem::Level: return @"LEVEL\nSELECT";
+        case TrayItem::Dpad: return _showDpad ? @"D-PAD\nON" : @"D-PAD\nOFF";
         case TrayItem::Log: return @"LOG";
         default: return @"";
     }
@@ -566,12 +596,15 @@ namespace {
         CGFloat fillAlpha = held ? 0.30 : 0.22;
         if (control.kind == Kind::Tray) {
             control.text.string = [self trayLabel:control.tray];
-            control.text.fontSize = 8;
-            control.text.frame = CGRectMake(0, control.radius - 10, 2 * control.radius, 22);
+            control.text.fontSize = 10;
+            control.text.font = (__bridge CFTypeRef)[UIFont boldSystemFontOfSize:10].fontName;
+            const CGRect trayBounds = [self boundsForControl:control];
+            const bool twoLines = [(NSString *)control.text.string containsString:@"\n"];
+            control.text.frame = CGRectMake(0, (trayBounds.size.height - (twoLines ? 26 : 13)) / 2, trayBounds.size.width, twoLines ? 26 : 14);
             control.text.wrapped = YES;
             const bool dim = (control.tray == TrayItem::Sens) && (gyroMode.load() == int(GyroMode::Off));
             control.group.opacity = dim ? 0.45 : 1.0;
-            if ([self trayItemOn:control.tray]) {
+            if ([self trayItemOn:control.tray] || (control.tray == TrayItem::Level)) {
                 border = Gold();
             }
         }
@@ -603,7 +636,8 @@ namespace {
     }
 
     _trayBacking.hidden = !_trayOpen;
-    const CGFloat stickAlpha = (_stickTouch != nil ? 1.0 : IdleAlpha) * _opacity;
+    // Modern hides the stick until a thumb lands; Classic shows where it rests.
+    const CGFloat stickAlpha = (_stickTouch != nil ? 1.0 : (_classicControls ? IdleAlpha : 0.0)) * _opacity;
     _stickBase.opacity = float(stickAlpha);
     _stickKnobLayer.opacity = float(stickAlpha);
     _stickBase.path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(_stickOrigin.x - StickRadius, _stickOrigin.y - StickRadius, 2 * StickRadius, 2 * StickRadius)].CGPath;
@@ -760,9 +794,6 @@ namespace {
         case Kind::Camera:
             [self takePhotos:1];
             break;
-        case Kind::Level:
-            [self openLevelCard];
-            break;
         case Kind::Tray:
             [self useTray:control.tray];
             break;
@@ -846,6 +877,14 @@ namespace {
         case TrayItem::Dpad:
             _showDpad = !_showDpad;
             break;
+        case TrayItem::Controls:
+            _classicControls = !_classicControls;
+            [self applyControlScheme];
+            [self showToast:_classicControls ? @"Classic controls (the N64's own)" : @"Modern controls: move and strafe, drag to look"];
+            break;
+        case TrayItem::Level:
+            [self openLevelCard];
+            break;
         case TrayItem::Log:
             [self closeTray];
             if (self.toggleLog != nil) {
@@ -858,6 +897,18 @@ namespace {
 
     [self saveSettings];
     [self refresh];
+}
+
+// SotE-Recomp's on-foot scheme: Modern (move and strafe, look separately)
+// or Classic (the N64's turn-and-walk), switched live and saved to
+// sote_controls.json.
+- (void)applyControlScheme {
+    using namespace sote::controls_menu;
+    const ControlScheme wanted = _classicControls ? ControlScheme::Classic : ControlScheme::Modern;
+    if (current_scheme(SchemeSlot::OnFoot) != wanted) {
+        cycle_scheme(SchemeSlot::OnFoot, 1);
+        persist();
+    }
 }
 
 - (void)opacityChanged:(UISlider *)slider {
@@ -874,6 +925,7 @@ namespace {
     _cheatOn = on;
     sote_cheat_set(on);
     [self saveSettings];
+    [self setNeedsLayout];
     if (on && !wasOn) {
         if (!sote_cheat_play_sound()) {
             [self showToast:@"Cheats on (add clips to Files > SotE > Cheat Sounds)"];
@@ -1240,3 +1292,21 @@ namespace {
 }
 
 @end
+
+void sote_touch_prepare_controls(NSURL *documents) {
+    // The game reads its on-foot scheme from sote_controls.json at startup;
+    // write the player's choice (Modern unless set to Classic) before then,
+    // keeping the bike's.
+    [NSUserDefaults.standardUserDefaults registerDefaults:@{ @"iosTouchClassicControls": @NO }];
+    const bool classic = [NSUserDefaults.standardUserDefaults boolForKey:@"iosTouchClassicControls"];
+    NSURL *file = [documents URLByAppendingPathComponent:@"sote_controls.json"];
+    NSString *existing = [NSString stringWithContentsOfURL:file encoding:NSUTF8StringEncoding error:nil] ?: @"";
+    NSString *bike = @"Classic";
+    NSRange key = [existing rangeOfString:@"\"bike\""];
+    if ((key.location != NSNotFound) && [[existing substringFromIndex:key.location] containsString:@"\"Modern\""]) {
+        bike = @"Modern";
+    }
+
+    NSString *json = [NSString stringWithFormat:@"{\n  \"on_foot\": \"%@\",\n  \"bike\": \"%@\"\n}\n", classic ? @"Classic" : @"Modern", bike];
+    [json writeToURL:file atomically:YES encoding:NSUTF8StringEncoding error:nil];
+}

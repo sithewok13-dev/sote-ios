@@ -136,6 +136,7 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
     ((CAMetalLayer *)_metalView.layer).framebufferOnly = NO;
     sote::platform::ios_set_game_view((__bridge void *)_metalView, (__bridge void *)_metalView.layer);
 
+    sote_touch_prepare_controls(documents);
     __weak SoteViewController *weakSelf = self;
     NSThread *gameThread = [[NSThread alloc] initWithBlock:^{
         // Run RT64 without 4x MSAA and high-precision color until those are

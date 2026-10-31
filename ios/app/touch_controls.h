@@ -17,3 +17,7 @@
 @property (nonatomic, copy) void (^toggleLog)(void);
 
 @end
+
+// Writes the player's on-foot control scheme (Modern by default) into the
+// game's sote_controls.json. Call before the game starts.
+void sote_touch_prepare_controls(NSURL *documents);
