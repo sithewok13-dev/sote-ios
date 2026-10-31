@@ -64,6 +64,9 @@ upstream commits SotE-Recomp uses.
   copies, which SotE-Recomp's screen capture uses. `0003` logs failed
   command buffers and failed texture creations, which Metal otherwise only
   records silently.
+  `0004` checks texture buffer views (which RT64's compute shaders read
+  vertex data through): Metal returns nil past a width limit that is lower
+  on iOS, so it logs that and retries with the view clamped.
 - `patches/sote-recomp/`: `0001` ports SotE-Recomp's Windows-only code: its
   window, message pump, crash reports and executable path go behind
   `#ifdef _WIN32` with iOS versions; `main()` becomes `sote_main()`;

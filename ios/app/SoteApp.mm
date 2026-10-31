@@ -145,9 +145,6 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
         // Run RT64 without 4x MSAA and high-precision color, the likeliest
         // causes of the black screen (no GPU errors are reported).
         setenv("SOTE_FORCE_COMPATIBILITY", "1", 1);
-        // 0.5.8 showed RT64's framebuffer gets coverage but no color: tint
-        // every draw magenta through a shader-read buffer to test that path.
-        setenv("SOTE_DEBUG_HIGHLIGHT", "1", 1);
         static char programName[] = "SotE";
         char *argv[] = {programName, nullptr};
         const int result = sote_main(1, argv);

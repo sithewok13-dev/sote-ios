@@ -1,0 +1,30 @@
+diff --git a/plume_metal.cpp b/plume_metal.cpp
+index 136c6ae..38114ea 100644
+--- a/plume_metal.cpp
++++ b/plume_metal.cpp
+@@ -1206,6 +1206,25 @@ namespace plume {
+         // Create texture with configured descriptor and alignment
+         MTL::TextureDescriptor *descriptor = MTL::TextureDescriptor::textureBufferDescriptor(pixelFormat, width, options, usage);
+         this->texture = buffer->mtl->newTexture(descriptor, 0, bytesPerRow);
++
++        // Texture buffers have a maximum width that is lower on iOS than on
++        // macOS, and Metal returns nil past it. Shaders then read zeros
++        // through the view, so report it and retry with the view clamped.
++        static std::atomic<int> failureReports{0};
++        uint32_t clampedWidth = width;
++        while ((this->texture == nullptr) && (clampedWidth > (1U << 20))) {
++            clampedWidth = std::min(clampedWidth / 2, 1U << 28);
++            descriptor = MTL::TextureDescriptor::textureBufferDescriptor(pixelFormat, clampedWidth, options, usage);
++            this->texture = buffer->mtl->newTexture(descriptor, 0, alignUp(uint64_t(clampedWidth) * RenderFormatSize(format), rowAlignment));
++        }
++
++        if ((clampedWidth != width) || (this->texture == nullptr)) {
++            if (failureReports++ < 10) {
++                fprintf(stderr, "[plume] texture buffer view: format=%d width=%u size=%llu -> %s width=%u\n",
++                    int(format), width, static_cast<unsigned long long>(buffer->desc.size),
++                    (this->texture != nullptr) ? "clamped to" : "failed at", clampedWidth);
++            }
++        }
+     }
+ 
+     MetalBufferFormattedView::~MetalBufferFormattedView() {
