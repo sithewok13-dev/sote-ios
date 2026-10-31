@@ -149,7 +149,8 @@ not cover ROM-derived code or the game's names, art and media.
    - CHEAT (shown from the tray): hold 0.5 s to switch infinite health,
      lives, ammo, missiles and vehicle health; it plays a random clip from
      Files > SotE > Cheat Sounds (your own clips);
-   A game controller works too.
+   In the game's menus, tap to choose (A) and swipe up or down to move
+   between rows. A game controller works too.
 
 If anything goes wrong, `sote-log.txt` and the `logs` folder in the same
 place say what happened.

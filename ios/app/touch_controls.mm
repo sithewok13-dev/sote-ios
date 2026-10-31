@@ -8,11 +8,13 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
 #include "controls_menu.hpp"
 #include "ios_cheat.h"
+#include "menu_skin.hpp"
 #include "ios_photos.h"
 #include "sote_platform_ios.h"
 
@@ -43,6 +45,10 @@ namespace {
     constexpr double MenuHold = 0.45;
     constexpr double CheatHold = 0.5;
     constexpr double StartPulse = 0.15;
+    constexpr double MenuPulse = 0.1;
+    constexpr double MenuPulseGap = 0.06;
+    constexpr double MenuTapTime = 0.35;
+    constexpr CGFloat MenuSwipeStep = 40.0;
     constexpr CGFloat HoldMoveLimit = 12.0;
     constexpr CGFloat TrayRadius = 20.0;
     constexpr CGFloat TrayStep = 80.0;
@@ -109,6 +115,7 @@ namespace {
         bool burst = false;
         int burstShots = 0;
         CFTimeInterval nextBurst = 0;
+        CGFloat swipeY = 0;
     };
 
     CGFloat distance(CGPoint a, CGPoint b) {
@@ -162,6 +169,9 @@ namespace {
 
     // State.
     CFTimeInterval _startUntil;
+    // Short presses queued by menu taps and swipes: bit, start, end.
+    std::vector<std::tuple<uint16_t, CFTimeInterval, CFTimeInterval>> _pulses;
+    CFTimeInterval _pulseCursor;
     uint16_t _pressed;
     CGFloat _opacity;
     bool _showCheat;
@@ -731,7 +741,27 @@ namespace {
         if (state.role == Role::Look) {
             const CGFloat dx = p.x - state.last.x;
             const CGFloat dy = p.y - state.last.y;
-            sote::platform::ios_add_look(int(std::lround(dx * LookCountsPerPoint)), int(std::lround(dy * LookCountsPerPoint)));
+            if (distance(p, state.start) > HoldMoveLimit) {
+                state.moved = true;
+            }
+
+            if ([self menuShowing]) {
+                // In the game's menus a swipe moves the selection, one row
+                // per MenuSwipeStep points.
+                state.swipeY += dy;
+                while (state.swipeY <= -MenuSwipeStep) {
+                    [self pulse:N64DUp];
+                    state.swipeY += MenuSwipeStep;
+                }
+
+                while (state.swipeY >= MenuSwipeStep) {
+                    [self pulse:N64DDown];
+                    state.swipeY -= MenuSwipeStep;
+                }
+            }
+            else {
+                sote::platform::ios_add_look(int(std::lround(dx * LookCountsPerPoint)), int(std::lround(dy * LookCountsPerPoint)));
+            }
         }
         else if (state.role == Role::Control) {
             const Control &control = _controls[state.control];
@@ -771,6 +801,11 @@ namespace {
         if ((state.role == Role::Control) && !state.fired && !state.moved && (event != nil)) {
             [self tapControl:state.control];
         }
+        else if ((state.role == Role::Look) && !state.moved && (event != nil) &&
+                 (CACurrentMediaTime() - state.down < MenuTapTime) && [self menuShowing]) {
+            // A tap in a menu confirms, like A.
+            [self pulse:N64A];
+        }
         else if ((state.role == Role::Control) && state.burst) {
             [self finishBurst];
         }
@@ -784,6 +819,19 @@ namespace {
 }
 
 #pragma mark - Actions
+
+// True while one of the game's menus (pause, options, profiles...) is up.
+- (bool)menuShowing {
+    return sote::menu_skin::latest() != nullptr;
+}
+
+// Queues a short press of an N64 button, after any already queued, so
+// repeated presses are seen as separate.
+- (void)pulse:(uint16_t)bit {
+    const CFTimeInterval start = std::max(CACurrentMediaTime(), _pulseCursor);
+    _pulses.emplace_back(bit, start, start + MenuPulse);
+    _pulseCursor = start + MenuPulse + MenuPulseGap;
+}
 
 - (void)tapControl:(int)index {
     Control &control = _controls[index];
@@ -927,12 +975,8 @@ namespace {
     [self saveSettings];
     [self setNeedsLayout];
     if (on && !wasOn) {
-        if (!sote_cheat_play_sound()) {
-            [self showToast:@"Cheats on (add clips to Files > SotE > Cheat Sounds)"];
-        }
-        else {
-            [self showToast:@"Cheats on"];
-        }
+        sote_cheat_play_sound();
+        [self showToast:@"Cheats on"];
     }
     else if (!on && wasOn) {
         [self showToast:@"Cheats off"];
@@ -1161,8 +1205,22 @@ namespace {
         }
     }
 
-    if (CACurrentMediaTime() < _startUntil) {
+    const CFTimeInterval now = CACurrentMediaTime();
+    if (now < _startUntil) {
         bits |= N64Start;
+    }
+
+    for (auto it = _pulses.begin(); it != _pulses.end();) {
+        if (now >= std::get<2>(*it)) {
+            it = _pulses.erase(it);
+            continue;
+        }
+
+        if (now >= std::get<1>(*it)) {
+            bits |= std::get<0>(*it);
+        }
+
+        ++it;
     }
 
     float x = 0.0f;
