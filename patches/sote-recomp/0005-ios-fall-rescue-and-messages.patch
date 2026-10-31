@@ -1,0 +1,106 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 312214e..457ca53 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -3183,6 +3183,80 @@ void cheat_reload_settings() {
+ }
+ 
+ 
++#ifndef _WIN32
++// iOS: with infinite health on, a bottomless fall would still kill Dash, as
++// the game treats it as instant death rather than damage. Remember the last
++// spot he stood still on, and put him back there after a long drop.
++// Player object: position floats at +0x50/+0x54/+0x58 (y up), speed at +0x60.
++constexpr uint32_t cheat_player_address_for_rescue() { return 0x80112B30U; }
++
++void cheat_fall_rescue(uint8_t* rdram, int16_t event) {
++    static uint32_t last_player = 0;
++    static int16_t last_event = -1;
++    static float last_y = 0.0f;
++    static float safe[3] = {};
++    static bool have_safe = false;
++    static int still_frames = 0;
++    static int fall_frames = 0;
++    constexpr int StillFrames = 20;
++    constexpr int FallFrames = 45;
++    constexpr float FallDistance = 250.0f;
++
++    const uint32_t player = read_guest_word(rdram, cheat_player_address_for_rescue());
++    const int32_t result = static_cast<int32_t>(read_guest_word(rdram, 0x800DD2B0U));
++    const bool on_foot = sote::control_bindings::context_active(sote::control_bindings::Context::OnFoot);
++    if (!cheat_settings.infinite_health || result != 2 || !on_foot ||
++        player < 0x80000000U || player >= 0x80800000U - 0x200U) {
++        have_safe = false;
++        last_player = 0;
++        return;
++    }
++
++    if (player != last_player || event != last_event) {
++        last_player = player;
++        last_event = event;
++        have_safe = false;
++        still_frames = 0;
++        fall_frames = 0;
++        last_y = read_guest_float(rdram, player + 0x54U);
++        return;
++    }
++
++    float position[3];
++    for (int axis = 0; axis < 3; ++axis) {
++        position[axis] = read_guest_float(rdram, player + 0x50U + axis * 4U);
++    }
++
++    if (!std::isfinite(position[1])) {
++        return;
++    }
++
++    const float dy = position[1] - last_y;
++    last_y = position[1];
++    still_frames = (std::fabs(dy) < 0.5f) ? still_frames + 1 : 0;
++    fall_frames = (dy < -0.5f) ? fall_frames + 1 : 0;
++    if (still_frames >= StillFrames) {
++        std::memcpy(safe, position, sizeof(safe));
++        have_safe = true;
++    }
++
++    if (have_safe && (fall_frames >= FallFrames) && (position[1] < safe[1] - FallDistance)) {
++        uint32_t bits = 0;
++        for (int axis = 0; axis < 3; ++axis) {
++            std::memcpy(&bits, &safe[axis], sizeof(bits));
++            write_guest_word(rdram, player + 0x50U + axis * 4U, bits);
++        }
++
++        write_guest_word(rdram, player + 0x60U, 0U);
++        last_y = safe[1];
++        fall_frames = 0;
++        still_frames = 0;
++        std::printf("[sote][cheats] fall rescue to %.1f,%.1f,%.1f\n", safe[0], safe[1], safe[2]);
++        std::fflush(stdout);
++    }
++}
++#endif
++
+ void sote_cheats_frame(uint8_t* rdram) {
+     if (!rdram) return;
+     const int vi = vi_count.load(std::memory_order_relaxed);
+@@ -3219,6 +3293,9 @@ void sote_cheats_frame(uint8_t* rdram) {
+         sote::control_bindings::context_active(sote::control_bindings::Context::OnFoot),
+         outrider_object.load(std::memory_order_relaxed),
+         vi - outrider_object_vi.load(std::memory_order_relaxed) < 30);
++#ifndef _WIN32
++    cheat_fall_rescue(rdram, event);
++#endif
+ }
+ 
+ 
+@@ -4633,6 +4710,10 @@ extern "C" void sote_note_droid_text_buffer_draw(
+     sote::hd_audio::play_visible_voice(text,
+             static_cast<uint64_t>(vi_count.load(std::memory_order_relaxed)),
+             event, slot);
++#ifndef _WIN32
++    // iOS: a tap dismisses messages (with Start) only while one is drawn.
++    if (!text.empty()) sote::platform::note_message_drawn();
++#endif
+ }
+ 
+ extern "C" void sote_hide_communicator_slot(uint32_t slot, int32_t x) {

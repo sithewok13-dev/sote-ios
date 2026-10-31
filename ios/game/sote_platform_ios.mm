@@ -6,6 +6,7 @@
 #import <Foundation/Foundation.h>
 
 #include <atomic>
+#include <chrono>
 
 #include "frontend.hpp"
 
@@ -30,6 +31,21 @@ namespace sote::platform {
 
     int take_level_jump() {
         return level_jump.exchange(-1);
+    }
+
+    static std::atomic<int64_t> message_drawn_ms{0};
+
+    static int64_t steady_ms() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    void note_message_drawn() {
+        message_drawn_ms.store(steady_ms());
+    }
+
+    bool ios_message_showing() {
+        return steady_ms() - message_drawn_ms.load() < 250;
     }
 
     void ios_add_look(int x, int y) {

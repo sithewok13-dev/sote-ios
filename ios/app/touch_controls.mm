@@ -802,9 +802,15 @@ namespace {
             [self tapControl:state.control];
         }
         else if ((state.role == Role::Look) && !state.moved && (event != nil) &&
-                 (CACurrentMediaTime() - state.down < MenuTapTime) && [self menuShowing]) {
-            // A tap in a menu confirms, like A.
-            [self pulse:N64A];
+                 (CACurrentMediaTime() - state.down < MenuTapTime)) {
+            if ([self menuShowing]) {
+                // A tap in a menu confirms, like A.
+                [self pulse:N64A];
+            }
+            else if (sote::platform::ios_message_showing()) {
+                // A tap clears a message box, like Start.
+                [self pulse:N64Start];
+            }
         }
         else if ((state.role == Role::Control) && state.burst) {
             [self finishBurst];
@@ -976,10 +982,6 @@ namespace {
     [self setNeedsLayout];
     if (on && !wasOn) {
         sote_cheat_play_sound();
-        [self showToast:@"Cheats on"];
-    }
-    else if (!on && wasOn) {
-        [self showToast:@"Cheats off"];
     }
 
     [self refresh];

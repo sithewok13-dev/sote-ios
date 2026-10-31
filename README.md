@@ -81,6 +81,8 @@ upstream commits SotE-Recomp uses.
   `0003` feeds the on-screen controls (`ios/app/touch_controls.mm`) into the
   game's N64 input.
   `0004` lets the level selector jump to a level's first event.
+  `0005` adds the cheat's fall rescue and tells the app when a message box
+  is drawn.
 - `ios/game/`: the `sote_game` library: SotE-Recomp's game code plus
   `sote_platform_ios.mm` (Documents folder, Metal view, keyboard stub) and
   `sote_win32_compat.h` (the few Win32 names it uses elsewhere: key codes,
@@ -147,10 +149,12 @@ not cover ROM-derived code or the game's names, art and media.
      0.2 s, up to 10). Photos go to your library, or to Files > SotE >
      Screenshots without access;
    - CHEAT (shown from the tray): hold 0.5 s to switch infinite health,
-     lives, ammo, missiles and vehicle health; it plays a random clip from
-     Files > SotE > Cheat Sounds (your own clips);
+     lives, ammo, missiles and vehicle health, and saves Dash from
+     bottomless falls (he is put back on the last ledge he stood on). Its
+     sound is the app's own, or a random clip of yours from Files > SotE >
+     Cheat Sounds;
    In the game's menus, tap to choose (A) and swipe up or down to move
-   between rows. A game controller works too.
+   between rows. A tap clears a message box (Start). A game controller works too.
 
 If anything goes wrong, `sote-log.txt` and the `logs` folder in the same
 place say what happened.

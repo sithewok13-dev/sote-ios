@@ -17,6 +17,9 @@ namespace sote::platform {
     // Relative look from touch drags and the gyro, in mouse counts. Feeds the
     // game's own mouse look (Modern on foot, and vehicle steering).
     void ios_add_look(int x, int y);
+
+    // True while the game is drawing a message box (Start dismisses it).
+    bool ios_message_showing();
 }
 
 // SotE-Recomp's main(), renamed by patches/sote-recomp for iOS. Blocks until

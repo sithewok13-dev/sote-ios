@@ -31,4 +31,7 @@ namespace sote::platform {
     // The event a level selector asked to jump to, once, or -1. Polled from
     // the game thread every VI.
     int take_level_jump();
+
+    // Called from the game thread each time a message box's text is drawn.
+    void note_message_drawn();
 }
