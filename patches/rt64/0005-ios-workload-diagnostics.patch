@@ -1,0 +1,128 @@
+diff --git a/src/hle/rt64_workload_queue.cpp b/src/hle/rt64_workload_queue.cpp
+index 5a331aa..ed35225 100644
+--- a/src/hle/rt64_workload_queue.cpp
++++ b/src/hle/rt64_workload_queue.cpp
+@@ -4,6 +4,9 @@
+ 
+ #include "rt64_workload_queue.h"
+ 
++#include <algorithm>
++#include <cstdio>
++
+ #include "common/rt64_thread.h"
+ 
+ #include "rt64_present_queue.h"
+@@ -11,6 +14,45 @@
+ #define ENABLE_HIGH_RESOLUTION_RENDERER 1
+ 
+ namespace RT64 {
++    // iOS black-screen diagnostic: at a few workloads, log what RT64 asks the
++    // GPU to draw, and read back the vertex data before and after the RSP
++    // compute pass.
++    struct WorkloadDiagnostic {
++        static constexpr uint64_t VertexBytes = 16 * sizeof(float) * 4;
++        bool active = false;
++        std::unique_ptr<RenderBuffer> screenPos;
++        std::unique_ptr<RenderBuffer> uploadedPos;
++        uint64_t screenPosBytes = 0;
++        uint64_t uploadedPosBytes = 0;
++    };
++
++    static bool isDiagnosticWorkload(uint64_t workloadNumber) {
++        return (workloadNumber == 240) || (workloadNumber == 900);
++    }
++
++    static void logReadback(const char *name, RenderBuffer *buffer, uint64_t bytes) {
++        if ((buffer == nullptr) || (bytes == 0)) {
++            std::printf("[ios][workload] %s: none\n", name);
++            return;
++        }
++
++        RenderRange range = { 0, bytes };
++        const float *values = reinterpret_cast<const float *>(buffer->map(0, &range));
++        if (values == nullptr) {
++            std::printf("[ios][workload] %s: map failed\n", name);
++            return;
++        }
++
++        const uint32_t count = uint32_t(std::min<uint64_t>(bytes / sizeof(float), 16));
++        std::printf("[ios][workload] %s:", name);
++        for (uint32_t i = 0; i < count; i++) {
++            std::printf(" %.2f", values[i]);
++        }
++
++        std::printf("\n");
++        buffer->unmap();
++    }
++
+     // WorkloadQueue
+ 
+     WorkloadQueue::WorkloadQueue() {
+@@ -837,11 +879,67 @@ namespace RT64 {
+                     fbPair.endFbOperations, targetManager, fixedResScale, f, workload.submissionFrame);
+             }
+ 
++            static uint64_t diagnosticWorkloadNumber = 0;
++            WorkloadDiagnostic diagnostic;
++            diagnostic.active = isDiagnosticWorkload(++diagnosticWorkloadNumber);
++            if (diagnostic.active) {
++                RenderCommandList *diagnosticList = ext.workloadGraphicsWorker->commandList.get();
++                const RenderBuffer *screenPosSource = workload.outputBuffers.screenPosBuffer.buffer.get();
++                const RenderBuffer *uploadedPosSource = workload.drawBuffers.positionBuffer.get();
++                diagnostic.screenPosBytes = std::min(workload.outputBuffers.screenPosBuffer.computedSize, WorkloadDiagnostic::VertexBytes);
++                diagnostic.uploadedPosBytes = std::min(uint64_t(workload.drawData.posFloats.size() * sizeof(float)), WorkloadDiagnostic::VertexBytes);
++                if ((screenPosSource != nullptr) && (diagnostic.screenPosBytes > 0)) {
++                    diagnostic.screenPos = ext.device->createBuffer(RenderBufferDesc::ReadbackBuffer(diagnostic.screenPosBytes));
++                    diagnosticList->barriers(RenderBarrierStage::COPY, RenderBufferBarrier(const_cast<RenderBuffer *>(screenPosSource), RenderBufferAccess::READ));
++                    diagnosticList->copyBufferRegion(diagnostic.screenPos.get(), screenPosSource, diagnostic.screenPosBytes);
++                }
++
++                if ((uploadedPosSource != nullptr) && (diagnostic.uploadedPosBytes > 0)) {
++                    diagnostic.uploadedPos = ext.device->createBuffer(RenderBufferDesc::ReadbackBuffer(diagnostic.uploadedPosBytes));
++                    diagnosticList->barriers(RenderBarrierStage::COPY, RenderBufferBarrier(const_cast<RenderBuffer *>(uploadedPosSource), RenderBufferAccess::READ));
++                    diagnosticList->copyBufferRegion(diagnostic.uploadedPos.get(), uploadedPosSource, diagnostic.uploadedPosBytes);
++                }
++            }
++
+             ext.workloadGraphicsWorker->commandList->writeTimestamp(queryPool.get(), 1);
+             ext.workloadGraphicsWorker->commandList->end();
+             framebufferRenderer->waitForUploaders();
+             ext.workloadGraphicsWorker->execute();
+             ext.workloadGraphicsWorker->wait();
++            if (diagnostic.active) {
++                std::printf("[ios][workload] n=%llu vertices=%u fb_pairs=%u process_rsp=%d screen_pos_size=%llu\n",
++                    static_cast<unsigned long long>(diagnosticWorkloadNumber), workload.drawData.vertexCount(), workload.fbPairCount,
++                    processRSP ? 1 : 0, static_cast<unsigned long long>(workload.outputBuffers.screenPosBuffer.computedSize));
++                for (uint32_t f = 0; (f < workload.fbPairCount) && (f < 4); f++) {
++                    const FramebufferPair &fbPair = workload.fbPairs[f];
++                    std::printf("[ios][workload] fb %u: color=%08X width=%u fmt=%u siz=%u depth=%08X projections=%u\n", f,
++                        fbPair.colorImage.address, fbPair.colorImage.width, fbPair.colorImage.fmt, fbPair.colorImage.siz,
++                        fbPair.depthImage.address, fbPair.projectionCount);
++                    for (uint32_t p = 0; (p < fbPair.projectionCount) && (p < 4); p++) {
++                        const Projection &proj = fbPair.projections[p];
++                        std::printf("[ios][workload]   proj %u: type=%d calls=%u scissor=%d,%d-%d,%d\n", p, int(proj.type), proj.gameCallCount,
++                            proj.scissorRect.ulx, proj.scissorRect.uly, proj.scissorRect.lrx, proj.scissorRect.lry);
++                        for (uint32_t d = 0; (d < proj.gameCallCount) && (d < 3); d++) {
++                            const DrawCall &call = proj.gameCalls[d].callDesc;
++                            std::printf("[ios][workload]     call %u: tris=%u rect=%d,%d-%d,%d om=%08X:%08X cc=%08X:%08X prim=%.2f,%.2f,%.2f,%.2f fill=%08X tex=%u tiles=%u faces=%u\n",
++                                d, call.triangleCount, call.rect.ulx, call.rect.uly, call.rect.lrx, call.rect.lry,
++                                call.otherMode.H, call.otherMode.L, call.colorCombiner.H, call.colorCombiner.L,
++                                float(call.rdpParams.primColor.x), float(call.rdpParams.primColor.y), float(call.rdpParams.primColor.z), float(call.rdpParams.primColor.w),
++                                call.fillColor, call.textureOn, call.tileCount, proj.gameCalls[d].meshDesc.faceIndicesStart);
++                        }
++                    }
++                }
++
++                std::printf("[ios][workload] cpu_pos:");
++                for (size_t i = 0; (i < workload.drawData.posFloats.size()) && (i < 16); i++) {
++                    std::printf(" %.2f", workload.drawData.posFloats[i]);
++                }
++
++                std::printf("\n");
++                logReadback("gpu_uploaded_pos", diagnostic.uploadedPos.get(), diagnostic.uploadedPosBytes);
++                logReadback("gpu_screen_pos", diagnostic.screenPos.get(), diagnostic.screenPosBytes);
++                std::fflush(stdout);
++            }
+             workerMutex.unlock();
+ 
+             // Update the GPU profiler with the results from the timestamps of the frame.
