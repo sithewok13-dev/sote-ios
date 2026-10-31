@@ -24,6 +24,9 @@ namespace RT64 {
     extern std::atomic<bool> iosFreezeActive;
     extern std::atomic<bool> iosFreezeHasPivot;
     extern std::atomic<float> iosFreezePivot[3];
+    extern std::atomic<bool> iosFreezeHasEye;
+    extern std::atomic<float> iosFreezeEye[3];
+    extern std::atomic<float> iosFreezeForward[3];
     extern std::atomic<float> iosFreezeYaw;
     extern std::atomic<float> iosFreezePitch;
     extern std::atomic<float> iosFreezeZoom;
@@ -79,17 +82,18 @@ namespace {
     constexpr double ShotShow = 0.9;
     constexpr double FreezeTimeout = 1.5;
     constexpr float OrbitRadiansPerPoint = 0.3f * float(M_PI) / 180.0f;
-    constexpr float PivotHeight = 35.0f;
     constexpr int SelfieCounts[] = { 1, 3, 5 };
 
-    // Look: mouse counts per point dragged, and per degree the phone turns.
-    constexpr CGFloat LookCountsPerPoint = 2.0;
+    // Look: mouse counts per point dragged, and per degree the phone turns,
+    // both times SENS (the game turns 0.12 degrees per count).
+    constexpr CGFloat LookCountsPerPoint = 3.0;
     constexpr double GyroCountsPerDegree = 6.0;
     constexpr double GyroDeadZone = 1.5;
-    constexpr double GyroSens[] = { 1.0, 1.5, 2.0, 3.0 };
+    constexpr double LookSens[] = { 1.0, 1.5, 2.0, 3.0, 4.0 };
+    constexpr int LookSensCount = 5;
 
     enum class Kind { N64, Menu, Cheat, Camera, Level, Tray, Exit };
-    enum class TrayItem { None, Gyro, Sens, Opacity, Controls, Camera, Selfies, Cheat, Level, Dpad, Log };
+    enum class TrayItem { None, Gyro, Sens, Opacity, Controls, Camera, Selfies, Cheat, Level, Dpad };
     enum class Shot { None, Selfie, Cinematic, Action };
     enum class GyroMode { Off = 0, Touch = 1, Always = 2 };
     enum class Role { None, Stick, Look, Control };
@@ -198,6 +202,14 @@ namespace {
     // Short presses queued by menu taps and swipes: bit, start, end.
     std::vector<std::tuple<uint16_t, CFTimeInterval, CFTimeInterval>> _pulses;
     CFTimeInterval _pulseCursor;
+    // Look drag fractions not yet sent.
+    double _lookCarryX;
+    double _lookCarryY;
+    // A tapped menu row: the setting to move to and confirm (-1 for none).
+    int _menuTarget;
+    int _menuDirection;
+    int _menuLastFocus;
+    int _menuSteps;
     uint16_t _pressed;
     CGFloat _opacity;
     bool _showCheat;
@@ -230,6 +242,7 @@ namespace {
     self.backgroundColor = UIColor.clearColor;
     self.multipleTouchEnabled = YES;
     [self loadSettings];
+    _menuTarget = -1;
 
     UIColor *white = [UIColor colorWithWhite:1.0 alpha:0.4];
     UIColor *green = [UIColor colorWithRed:0.35 green:0.9 blue:0.45 alpha:0.6];
@@ -262,7 +275,6 @@ namespace {
         { Kind::Tray, 0, TrayItem::Level, @"", Gold(), TrayRadius, true },
         { Kind::Tray, 0, TrayItem::Dpad, @"", white, TrayRadius, true },
         { Kind::Tray, 0, TrayItem::Selfies, @"", white, TrayRadius, true },
-        { Kind::Tray, 0, TrayItem::Log, @"", white, TrayRadius, true },
         { Kind::Exit, 0, TrayItem::None, @"✕", white, 22, false },
     };
 
@@ -345,7 +357,7 @@ namespace {
         @"iosTouchSelfieShots": @1,
     }];
     gyroMode.store(int([defaults integerForKey:@"iosTouchGyroMode"]) % 3);
-    gyroSensIndex.store(int([defaults integerForKey:@"iosTouchGyroSens"]) % 4);
+    gyroSensIndex.store(int([defaults integerForKey:@"iosTouchGyroSens"]) % LookSensCount);
     _opacity = std::clamp(CGFloat([defaults doubleForKey:@"iosTouchOpacity"]), CGFloat(0.2), CGFloat(1.0));
     _showCheat = [defaults boolForKey:@"iosTouchShowCheat"];
     _cheatOn = _showCheat && [defaults boolForKey:@"iosTouchCheatOn"];
@@ -625,7 +637,7 @@ namespace {
     switch (item) {
         case TrayItem::Gyro:
             return (_motion.deviceMotionAvailable ? gyroNames[gyroMode.load()] : @"NO\nGYRO");
-        case TrayItem::Sens: return [NSString stringWithFormat:@"SENS\n%.1fx", GyroSens[gyroSensIndex.load()]];
+        case TrayItem::Sens: return [NSString stringWithFormat:@"SENS\n%.1fx", LookSens[gyroSensIndex.load()]];
         case TrayItem::Opacity: return [NSString stringWithFormat:@"OPACITY\n%d%%", int(std::lround(_opacity * 100))];
         case TrayItem::Controls: return _classicControls ? @"CONTROLS\nCLASSIC" : @"CONTROLS\nMODERN";
         case TrayItem::Camera: return _showCamera ? @"CAMERA\nON" : @"CAMERA\nOFF";
@@ -633,7 +645,6 @@ namespace {
         case TrayItem::Level: return @"LEVEL\nSELECT";
         case TrayItem::Dpad: return _showDpad ? @"D-PAD\nON" : @"D-PAD\nOFF";
         case TrayItem::Selfies: return [NSString stringWithFormat:@"SELFIES\n%d", SelfieCounts[_selfieIndex]];
-        case TrayItem::Log: return @"LOG";
         default: return @"";
     }
 }
@@ -661,8 +672,7 @@ namespace {
             const bool twoLines = [(NSString *)control.text.string containsString:@"\n"];
             control.text.frame = CGRectMake(0, (trayBounds.size.height - (twoLines ? 26 : 13)) / 2, trayBounds.size.width, twoLines ? 26 : 14);
             control.text.wrapped = YES;
-            const bool dim = (control.tray == TrayItem::Sens) && (gyroMode.load() == int(GyroMode::Off));
-            control.group.opacity = dim ? 0.45 : 1.0;
+            control.group.opacity = 1.0;
             if ([self trayItemOn:control.tray] || (control.tray == TrayItem::Level)) {
                 border = Gold();
             }
@@ -812,7 +822,17 @@ namespace {
                 }
             }
             else {
-                sote::platform::ios_add_look(int(std::lround(dx * LookCountsPerPoint)), int(std::lround(dy * LookCountsPerPoint)));
+                // Keep the fractions, so slow drags still turn.
+                const double sens = LookSens[gyroSensIndex.load()];
+                _lookCarryX += dx * LookCountsPerPoint * sens;
+                _lookCarryY += dy * LookCountsPerPoint * sens;
+                const int countsX = int(_lookCarryX);
+                const int countsY = int(_lookCarryY);
+                _lookCarryX -= countsX;
+                _lookCarryY -= countsY;
+                if ((countsX != 0) || (countsY != 0)) {
+                    sote::platform::ios_add_look(countsX, countsY);
+                }
             }
         }
         else if (state.role == Role::Control) {
@@ -868,8 +888,15 @@ namespace {
         else if ((state.role == Role::Look) && !state.moved && (event != nil) &&
                  (CACurrentMediaTime() - state.down < MenuTapTime)) {
             if ([self menuShowing]) {
-                // A tap in a menu confirms, like A.
-                [self pulse:N64A];
+                // A tap on a row of the pause or options menu picks it; on
+                // other menus a tap confirms, like A.
+                const int row = [self menuRowAt:state.last];
+                if (row >= 0) {
+                    [self chooseMenuRow:row];
+                }
+                else if (row == -1) {
+                    [self pulse:N64A];
+                }
             }
             else if (sote::platform::ios_message_showing()) {
                 // A tap clears a message box, like Start.
@@ -893,6 +920,146 @@ namespace {
 // True while one of the game's menus (pause, options, profiles...) is up.
 - (bool)menuShowing {
     return sote::menu_skin::latest() != nullptr;
+}
+
+// The game's menus are drawn on a 960 x 540 canvas, fitted to the screen's
+// height and centred (SotE-Recomp's menu_canvas.cpp).
+- (CGPoint)menuCanvasPoint:(CGPoint)p {
+    const CGFloat scale = self.bounds.size.height / 540.0;
+    return CGPointMake((p.x - self.bounds.size.width / 2.0) / scale + 480.0, p.y / scale);
+}
+
+static bool menuRowSelected(const sote::menu_skin::Row &row) {
+    return ((row.color >> 24) & 255) >= 0xA0 && ((row.color >> 16) & 255) >= 0xD0 && ((row.color >> 8) & 255) >= 0xA0;
+}
+
+// The setting of the pause or options menu under a point, which the game
+// reports as focused_setting when it is selected: >= 0 for a row, -2 for a
+// point off the rows of those menus, -1 for any other menu.
+- (int)menuRowAt:(CGPoint)point {
+    const auto snapshot = sote::menu_skin::latest();
+    if (snapshot == nullptr) {
+        return -1;
+    }
+
+    const CGPoint c = [self menuCanvasPoint:point];
+    if (snapshot->screen == sote::menu_skin::Screen::Pause) {
+        // Resume, Options, Quit: 43 apart from y 216, in a box 264-696 wide.
+        if ((c.x < 264) || (c.x > 696) || (c.y < 207) || (c.y > 352)) {
+            return -2;
+        }
+
+        return std::clamp(int((c.y - 214.0) / 43.0), 0, 2);
+    }
+
+    if (snapshot->screen == sote::menu_skin::Screen::Options) {
+        // The return row at the bottom, then the settings, 40 apart from
+        // y 123, each setting (row - 51) / 2.
+        if ((c.x >= 254) && (c.x <= 706) && (c.y >= 503) && (c.y <= 542)) {
+            return 0;
+        }
+
+        if ((c.x < 184) || (c.x > 849)) {
+            return -2;
+        }
+
+        int index = 0;
+        for (int row = 53; row <= 67; row += 2) {
+            if (!snapshot->rows[row].visible()) {
+                continue;
+            }
+
+            const CGFloat y = 126.0 + index * 40;
+            if (y > 447) {
+                break;
+            }
+
+            if ((c.y >= y - 4) && (c.y < y + 36)) {
+                return (row - 51) / 2;
+            }
+
+            index++;
+        }
+
+        return -2;
+    }
+
+    return -1;
+}
+
+// The setting the pause or options menu has selected, or -1.
+- (int)menuFocus {
+    const auto snapshot = sote::menu_skin::latest();
+    if (snapshot == nullptr) {
+        return -1;
+    }
+
+    if (snapshot->focused_setting >= 0) {
+        return snapshot->focused_setting;
+    }
+
+    if (snapshot->screen == sote::menu_skin::Screen::Options) {
+        if (menuRowSelected(snapshot->rows[52])) {
+            return 0;
+        }
+
+        for (int row = 53; row <= 67; row += 2) {
+            if (snapshot->rows[row].visible() && menuRowSelected(snapshot->rows[row])) {
+                return (row - 51) / 2;
+            }
+        }
+    }
+
+    return -1;
+}
+
+// Moves the menu's selection to a tapped row with D-pad presses, watching
+// the game's own selection, then confirms with A.
+- (void)chooseMenuRow:(int)row {
+    const int focus = [self menuFocus];
+    if (focus < 0) {
+        [self pulse:N64A];
+        return;
+    }
+
+    _menuTarget = row;
+    _menuSteps = 0;
+    _menuLastFocus = -1;
+    // The options menu's return row (0) sits below the settings.
+    _menuDirection = ((row == 0) && (sote::menu_skin::latest() != nullptr) &&
+        (sote::menu_skin::latest()->screen == sote::menu_skin::Screen::Options)) ? 1 : ((row > focus) ? 1 : -1);
+}
+
+- (void)tickMenuTap:(CFTimeInterval)now {
+    if (_menuTarget < 0) {
+        return;
+    }
+
+    // Let the last press land and the menu redraw before looking again.
+    if (!_pulses.empty() || (now < _pulseCursor + 0.08)) {
+        return;
+    }
+
+    const int focus = [self menuFocus];
+    if ((focus < 0) || (_menuSteps > 12)) {
+        _menuTarget = -1;
+        return;
+    }
+
+    if (focus == _menuTarget) {
+        _menuTarget = -1;
+        [self pulse:N64A];
+        return;
+    }
+
+    // At an end that does not wrap, turn round.
+    if (focus == _menuLastFocus) {
+        _menuDirection = -_menuDirection;
+    }
+
+    _menuLastFocus = focus;
+    _menuSteps++;
+    [self pulse:(_menuDirection > 0) ? N64DDown : N64DUp];
 }
 
 // Queues a short press of an N64 button, after any already queued, so
@@ -987,7 +1154,7 @@ namespace {
             }
             break;
         case TrayItem::Sens:
-            gyroSensIndex.store((gyroSensIndex.load() + 1) % 4);
+            gyroSensIndex.store((gyroSensIndex.load() + 1) % LookSensCount);
             break;
         case TrayItem::Opacity:
             _opacityRow.hidden = !_opacityRow.hidden;
@@ -1015,12 +1182,6 @@ namespace {
             break;
         case TrayItem::Selfies:
             _selfieIndex = (_selfieIndex + 1) % 3;
-            break;
-        case TrayItem::Log:
-            [self closeTray];
-            if (self.toggleLog != nil) {
-                self.toggleLog();
-            }
             break;
         default:
             break;
@@ -1130,9 +1291,18 @@ namespace {
     float z = 0.0f;
     const bool havePivot = sote::platform::ios_player_position(&x, &y, &z);
     RT64::iosFreezePivot[0].store(x);
-    RT64::iosFreezePivot[1].store(y + PivotHeight);
+    RT64::iosFreezePivot[1].store(y);
     RT64::iosFreezePivot[2].store(z);
     RT64::iosFreezeHasPivot.store(havePivot);
+    float eye[3] = {};
+    float forward[3] = {};
+    const bool haveEye = sote::platform::ios_game_camera(eye, forward);
+    for (int i = 0; i < 3; i++) {
+        RT64::iosFreezeEye[i].store(eye[i]);
+        RT64::iosFreezeForward[i].store(forward[i]);
+    }
+
+    RT64::iosFreezeHasEye.store(haveEye);
     [self setOrbitYaw:0.0f pitch:0.0f zoom:1.0f];
     RT64::iosFreezePanX.store(0.0f);
     RT64::iosFreezePanY.store(0.0f);
@@ -1334,6 +1504,7 @@ static float randomBetween(float low, float high) {
     const CFTimeInterval now = CACurrentMediaTime();
     bool changed = false;
     [self tickShot:now];
+    [self tickMenuTap:now];
     for (auto &entry : _touches) {
         TouchState &state = entry.second;
         if (state.role != Role::Control) {
@@ -1542,7 +1713,7 @@ static float randomBetween(float low, float high) {
 
         yaw = deadZone(yaw);
         pitch = deadZone(pitch);
-        const double scale = GyroCountsPerDegree * GyroSens[gyroSensIndex.load()] * dt;
+        const double scale = GyroCountsPerDegree * LookSens[gyroSensIndex.load()] * dt;
         carryX += yaw * scale;
         carryY += pitch * scale;
         const int countsX = int(carryX);

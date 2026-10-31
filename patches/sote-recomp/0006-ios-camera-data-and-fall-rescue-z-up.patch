@@ -1,0 +1,117 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 457ca53..1c6fa49 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -3187,20 +3187,22 @@ void cheat_reload_settings() {
+ // iOS: with infinite health on, a bottomless fall would still kill Dash, as
+ // the game treats it as instant death rather than damage. Remember the last
+ // spot he stood still on, and put him back there after a long drop.
+-// Player object: position floats at +0x50/+0x54/+0x58 (y up), speed at +0x60.
++// Player object: position floats at +0x50/+0x54/+0x58 (z up, as in
++// modern_aim.cpp), speed at +0x60.
+ constexpr uint32_t cheat_player_address_for_rescue() { return 0x80112B30U; }
+ 
+ void cheat_fall_rescue(uint8_t* rdram, int16_t event) {
+     static uint32_t last_player = 0;
+     static int16_t last_event = -1;
+-    static float last_y = 0.0f;
++    static float last_z = 0.0f;
+     static float safe[3] = {};
+     static bool have_safe = false;
+     static int still_frames = 0;
+     static int fall_frames = 0;
+     constexpr int StillFrames = 20;
+-    constexpr int FallFrames = 45;
+-    constexpr float FallDistance = 250.0f;
++    constexpr int FallFrames = 40;
++    constexpr float FallDistance = 150.0f;
++    constexpr float Moving = 0.05f;
+ 
+     const uint32_t player = read_guest_word(rdram, cheat_player_address_for_rescue());
+     const int32_t result = static_cast<int32_t>(read_guest_word(rdram, 0x800DD2B0U));
+@@ -3218,7 +3220,7 @@ void cheat_fall_rescue(uint8_t* rdram, int16_t event) {
+         have_safe = false;
+         still_frames = 0;
+         fall_frames = 0;
+-        last_y = read_guest_float(rdram, player + 0x54U);
++        last_z = read_guest_float(rdram, player + 0x58U);
+         return;
+     }
+ 
+@@ -3227,20 +3229,20 @@ void cheat_fall_rescue(uint8_t* rdram, int16_t event) {
+         position[axis] = read_guest_float(rdram, player + 0x50U + axis * 4U);
+     }
+ 
+-    if (!std::isfinite(position[1])) {
++    if (!std::isfinite(position[2])) {
+         return;
+     }
+ 
+-    const float dy = position[1] - last_y;
+-    last_y = position[1];
+-    still_frames = (std::fabs(dy) < 0.5f) ? still_frames + 1 : 0;
+-    fall_frames = (dy < -0.5f) ? fall_frames + 1 : 0;
++    const float dz = position[2] - last_z;
++    last_z = position[2];
++    still_frames = (std::fabs(dz) < Moving) ? still_frames + 1 : 0;
++    fall_frames = (dz < -Moving) ? fall_frames + 1 : 0;
+     if (still_frames >= StillFrames) {
+         std::memcpy(safe, position, sizeof(safe));
+         have_safe = true;
+     }
+ 
+-    if (have_safe && (fall_frames >= FallFrames) && (position[1] < safe[1] - FallDistance)) {
++    if (have_safe && (fall_frames >= FallFrames) && (position[2] < safe[2] - FallDistance)) {
+         uint32_t bits = 0;
+         for (int axis = 0; axis < 3; ++axis) {
+             std::memcpy(&bits, &safe[axis], sizeof(bits));
+@@ -3248,7 +3250,7 @@ void cheat_fall_rescue(uint8_t* rdram, int16_t event) {
+         }
+ 
+         write_guest_word(rdram, player + 0x60U, 0U);
+-        last_y = safe[1];
++        last_z = safe[2];
+         fall_frames = 0;
+         still_frames = 0;
+         std::printf("[sote][cheats] fall rescue to %.1f,%.1f,%.1f\n", safe[0], safe[1], safe[2]);
+@@ -3295,6 +3297,40 @@ void sote_cheats_frame(uint8_t* rdram) {
+         vi - outrider_object_vi.load(std::memory_order_relaxed) < 30);
+ #ifndef _WIN32
+     cheat_fall_rescue(rdram, event);
++    // iOS camera: report the game's camera and where Dash is (z up), for
++    // the freeze camera, and hold the game while a freeze or selfie is on
++    // screen. RT64 keeps presenting the held frame from the VI thread.
++    const uint32_t camera = read_guest_word(rdram, 0x800D08A4U);
++    if (camera >= 0x80000000U && camera < 0x80800000U - 0x80U) {
++        sote::platform::note_camera(
++            read_guest_float(rdram, camera + 0x44U),
++            read_guest_float(rdram, camera + 0x48U),
++            read_guest_float(rdram, camera + 0x4CU),
++            read_guest_float(rdram, camera + 0x24U),
++            read_guest_float(rdram, camera + 0x28U),
++            read_guest_float(rdram, camera + 0x2CU));
++    }
++    else {
++        sote::platform::note_camera(NAN, NAN, NAN, NAN, NAN, NAN);
++    }
++
++    const uint32_t player = read_guest_word(rdram, 0x80112B30U);
++    if (player >= 0x80000000U && player < 0x80800000U - 0x200U &&
++        sote::control_bindings::context_active(sote::control_bindings::Context::OnFoot)) {
++        // The middle of his body, as modern_aim.cpp aims at.
++        const float middle = (read_guest_float(rdram, player + 0x68U) + read_guest_float(rdram, player + 0x6CU)) * 0.5f;
++        sote::platform::note_player_position(
++            read_guest_float(rdram, player + 0x50U),
++            read_guest_float(rdram, player + 0x54U),
++            read_guest_float(rdram, player + 0x58U) + (std::isfinite(middle) && std::fabs(middle) < 200.0f ? middle : 0.0f));
++    }
++    else {
++        sote::platform::note_player_position(NAN, NAN, NAN);
++    }
++
++    while (sote::platform::game_held()) {
++        std::this_thread::sleep_for(std::chrono::milliseconds(5));
++    }
+ #endif
+ }
+ 

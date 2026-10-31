@@ -7,15 +7,12 @@
 //  - a floating stick in the lower left; drag anywhere else to look;
 //  - A, B and the C buttons on the right, Z under L, L and R at the top;
 //  - START at the bottom: a tap presses Start, a 0.45 s hold (ring) opens
-//    the tray: GYRO, SENS, OPACITY, CAMERA, CHEAT, D-PAD, LOG;
+//    the tray: CONTROLS, GYRO, SENS, OPACITY, CAMERA, CHEAT, LEVEL, D-PAD,
+//    SELFIES;
 //  - optional top-row buttons: CAMERA (tap a photo, slide sideways for a
 //    burst), CHEAT (hold 0.5 s to switch the cheats) and LEVEL (cheat on).
 // Settings are kept in NSUserDefaults under iosTouch* keys.
 @interface SoteTouchControlsView : UIView
-
-// Called when the tray's LOG button is tapped.
-@property (nonatomic, copy) void (^toggleLog)(void);
-
 @end
 
 // Writes the player's on-foot control scheme (Modern by default) into the

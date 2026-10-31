@@ -60,6 +60,26 @@ namespace sote::platform {
         player_z.store(z);
     }
 
+    static std::atomic<float> camera_data[6] = {NAN, NAN, NAN, NAN, NAN, NAN};
+
+    void note_camera(float eye_x, float eye_y, float eye_z, float forward_x, float forward_y, float forward_z) {
+        const float values[6] = {eye_x, eye_y, eye_z, forward_x, forward_y, forward_z};
+        for (int i = 0; i < 6; i++) {
+            camera_data[i].store(values[i]);
+        }
+    }
+
+    bool ios_game_camera(float eye[3], float forward[3]) {
+        bool valid = true;
+        for (int i = 0; i < 3; i++) {
+            eye[i] = camera_data[i].load();
+            forward[i] = camera_data[i + 3].load();
+            valid = valid && std::isfinite(eye[i]) && std::isfinite(forward[i]);
+        }
+
+        return valid && ((forward[0] * forward[0] + forward[1] * forward[1] + forward[2] * forward[2]) > 0.5f);
+    }
+
     bool game_held() {
         return held.load();
     }

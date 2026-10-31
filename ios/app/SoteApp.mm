@@ -163,38 +163,14 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
     gameThread.qualityOfService = NSQualityOfServiceUserInteractive;
     [gameThread start];
 
-    // On-screen controller over the game. Its small "log" button shows or
-    // hides the game's log over the view.
-    _statusLabel.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
-    _statusLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
+    // On-screen controller over the game. The game's log is kept in
+    // Files > SotE > logs.
     _statusLabel.hidden = YES;
     _metalView.userInteractionEnabled = YES;
     SoteTouchControlsView *controls = [[SoteTouchControlsView alloc] initWithFrame:_metalView.bounds];
     controls.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    controls.toggleLog = ^{
-        SoteViewController *strongSelf = weakSelf;
-        if (strongSelf != nil) {
-            [strongSelf toggleLog];
-        }
-    };
     [_metalView addSubview:controls];
     [_metalView bringSubviewToFront:_statusLabel];
-    NSURL *logs = [documents URLByAppendingPathComponent:@"logs"];
-    [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
-        SoteViewController *strongSelf = weakSelf;
-        if (strongSelf == nil || strongSelf->_gameStopped) {
-            [timer invalidate];
-            return;
-        }
-
-        strongSelf->_statusLabel.text = [NSString stringWithFormat:@"SotE log\n%@\n-- errors --\n%@",
-            lastLines([logs URLByAppendingPathComponent:@"sote-latest.log"], 10),
-            lastLines([logs URLByAppendingPathComponent:@"sote-latest-errors.log"], 10)];
-    }];
-}
-
-- (void)toggleLog {
-    _statusLabel.hidden = !_statusLabel.hidden;
 }
 
 // The last `count` lines of a text file, or an empty string.

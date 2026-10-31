@@ -85,7 +85,9 @@ upstream commits SotE-Recomp uses.
   `0004` lets the level selector jump to a level's first event.
   `0005` adds the cheat's fall rescue and tells the app when a message box
   is drawn.
-  `0006` reports Dash's position and holds the game while the app freezes it.
+  `0006` reports the game camera and Dash's position (the game's world is
+  z up) and holds the game while the app freezes it; the fall rescue
+  watches z.
 - `ios/game/`: the `sote_game` library: SotE-Recomp's game code plus
   `sote_platform_ios.mm` (Documents folder, Metal view, keyboard stub) and
   `sote_win32_compat.h` (the few Win32 names it uses elsewhere: key codes,
@@ -146,8 +148,9 @@ not cover ROM-derived code or the game's names, art and media.
    - A, B and the C buttons on the right, Z under L, L and R at the top;
    - START at the bottom: tap for Start (begin, pause, skip story screens);
      hold 0.45 s (its border fills) for the tray: CONTROLS, GYRO (off /
-     while touching / always), SENS, OPACITY (slider; hold to reset),
-     CAMERA, CHEAT, LEVEL SELECT (cheat on), D-PAD, LOG;
+     while touching / always), SENS (look speed for drags and the gyro,
+     1x to 4x), OPACITY (slider; hold to reset), CAMERA, CHEAT, LEVEL
+     SELECT (cheat on), D-PAD, SELFIES;
    - CAMERA (top middle, beside CHEAT): tap for a photo; slide sideways for a
      burst (every 0.2 s, up to 10); hold 0.5 s for selfies (the game freezes
      and the camera swings round in front of Dash, 1, 3 or 5 shots, SELFIES
@@ -160,8 +163,8 @@ not cover ROM-derived code or the game's names, art and media.
      bottomless falls (he is put back on the last ledge he stood on). Its
      sound is the app's own, or a random clip of yours from Files > SotE >
      Cheat Sounds;
-   In the game's menus, tap to choose (A) and swipe up or down to move
-   between rows. A tap clears a message box (Start). A game controller works too.
+   In the game's menus, tap a row of the pause or options menu to pick it
+   (elsewhere a tap is A), and swipe up or down to move between rows. A tap clears a message box (Start). A game controller works too.
 
 If anything goes wrong, `sote-log.txt` and the `logs` folder in the same
 place say what happened.

@@ -39,6 +39,10 @@ namespace sote::platform {
     // foot (NaN otherwise), for the freeze camera.
     void note_player_position(float x, float y, float z);
 
+    // Called from the game thread every frame with the game camera's eye and
+    // forward direction in world units (z up; NaN when there is none).
+    void note_camera(float eye_x, float eye_y, float eye_z, float forward_x, float forward_y, float forward_z);
+
     // True while the app holds the game still (freeze camera, selfies); the
     // game thread waits while it is.
     bool game_held();

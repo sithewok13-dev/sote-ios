@@ -1,5 +1,5 @@
 diff --git a/src/hle/rt64_state.cpp b/src/hle/rt64_state.cpp
-index 7cae864..cdc9a8a 100644
+index 7cae864..f529e04 100644
 --- a/src/hle/rt64_state.cpp
 +++ b/src/hle/rt64_state.cpp
 @@ -5,7 +5,10 @@
@@ -13,7 +13,7 @@ index 7cae864..cdc9a8a 100644
  #include <cstdlib>
  
  #include "im3d/im3d.h"
-@@ -29,6 +32,40 @@
+@@ -29,6 +32,66 @@
  #define MI_INTR_SP          0x00000001
  
  namespace RT64 {
@@ -22,6 +22,9 @@ index 7cae864..cdc9a8a 100644
 +    std::atomic<bool> iosFreezeActive{false};
 +    std::atomic<bool> iosFreezeHasPivot{false};
 +    std::atomic<float> iosFreezePivot[3] = {};
++    std::atomic<bool> iosFreezeHasEye{false};
++    std::atomic<float> iosFreezeEye[3] = {};
++    std::atomic<float> iosFreezeForward[3] = {};
 +    std::atomic<float> iosFreezeYaw{0.0f};
 +    std::atomic<float> iosFreezePitch{0.0f};
 +    std::atomic<float> iosFreezeZoom{1.0f};
@@ -31,36 +34,62 @@ index 7cae864..cdc9a8a 100644
 +    namespace {
 +        struct IosFreezeBase {
 +            hlslpp::float3 pivot;
++            hlslpp::float3 up;
++            hlslpp::float3 across;
++            hlslpp::float3 back;
 +            float radius = 1.0f;
++            float viewScale = 1.0f;
 +            float yaw = 0.0f;
 +            float pitch = 0.0f;
 +        };
 +
 +        IosFreezeBase iosFreezeBase;
 +
-+        void iosFreezeLookAt(DebuggerCamera &camera, hlslpp::float3 position, hlslpp::float3 focus) {
-+            const hlslpp::float3 up = hlslpp::float3(0.0f, 1.0f, 0.0f);
++        // A look-at that keeps the game view's own scale (viewScale is the
++        // length of the inverse view's axes), so depth and clipping match.
++        void iosFreezeLookAt(DebuggerCamera &camera, hlslpp::float3 position, hlslpp::float3 focus, hlslpp::float3 up, float viewScale) {
 +            const hlslpp::float3 forward = hlslpp::normalize(position - focus);
 +            const hlslpp::float3 side = hlslpp::normalize(hlslpp::cross(up, forward));
 +            const hlslpp::float3 viewUp = hlslpp::normalize(hlslpp::cross(forward, side));
-+            camera.invViewMatrix[0] = hlslpp::float4(side, 0.0f);
-+            camera.invViewMatrix[1] = hlslpp::float4(viewUp, 0.0f);
-+            camera.invViewMatrix[2] = hlslpp::float4(forward, 0.0f);
++            camera.invViewMatrix[0] = hlslpp::float4(side * viewScale, 0.0f);
++            camera.invViewMatrix[1] = hlslpp::float4(viewUp * viewScale, 0.0f);
++            camera.invViewMatrix[2] = hlslpp::float4(forward * viewScale, 0.0f);
 +            camera.invViewMatrix[3] = hlslpp::float4(position, 1.0f);
 +            camera.viewMatrix = hlslpp::inverse(camera.invViewMatrix);
++        }
++
++        // The world axis closest to a direction, keeping its sign.
++        hlslpp::float3 iosNearestAxis(hlslpp::float3 v) {
++            const float x = float(v.x), y = float(v.y), z = float(v.z);
++            if ((std::fabs(x) >= std::fabs(y)) && (std::fabs(x) >= std::fabs(z))) {
++                return hlslpp::float3(x >= 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f);
++            }
++            else if (std::fabs(y) >= std::fabs(z)) {
++                return hlslpp::float3(0.0f, y >= 0.0f ? 1.0f : -1.0f, 0.0f);
++            }
++            else {
++                return hlslpp::float3(0.0f, 0.0f, z >= 0.0f ? 1.0f : -1.0f);
++            }
++        }
++
++        bool iosFinite(hlslpp::float3 v) {
++            return std::isfinite(float(v.x)) && std::isfinite(float(v.y)) && std::isfinite(float(v.z));
 +        }
 +    }
 +
      const float ShiftScaleMap[] = {
          1.0f,
          1.0f / 2.0f,
-@@ -1846,7 +1883,76 @@ namespace RT64 {
+@@ -1846,7 +1909,136 @@ namespace RT64 {
          clearExtended();
      }
      
 +    // iOS freeze camera: takes the game's own camera from the last workload,
 +    // pauses like the debugger does, and orbits around a pivot (Dash, as the
-+    // app reports him) by the app's yaw, pitch, zoom and pan.
++    // app reports him) by the app's yaw, pitch, zoom and pan. The orbit turns
++    // round the world's up axis, taken from the game camera, so the view
++    // never rolls; the pivot is placed relative to the game camera, so it
++    // does not matter how RT64's world space relates to the game's.
 +    bool State::iosFreezeStart() {
 +        const Workload &workload = ext.workloadQueue->workloads[ext.workloadQueue->previousWriteCursor()];
 +        const Projection *best = nullptr;
@@ -84,34 +113,91 @@ index 7cae864..cdc9a8a 100644
 +        camera.viewMatrix = workload.drawData.viewTransforms[best->transformsIndex];
 +        camera.invViewMatrix = hlslpp::inverse(camera.viewMatrix);
 +        camera.projMatrix = workload.drawData.projTransforms[best->transformsIndex];
++
++        // RT64's camera: position, and side/up/back axes with their length
++        // (the game's view may carry a scale, which the orbit keeps).
 +        const hlslpp::float3 position = camera.invViewMatrix[3].xyz;
-+        const hlslpp::float3 backward = hlslpp::normalize(camera.invViewMatrix[2].xyz);
-+        hlslpp::float3 pivot = position - backward * 300.0f;
-+        if (iosFreezeHasPivot.load()) {
-+            pivot = hlslpp::float3(iosFreezePivot[0].load(), iosFreezePivot[1].load(), iosFreezePivot[2].load());
++        const float scale = float(hlslpp::length(camera.invViewMatrix[2].xyz));
++        const hlslpp::float3 back = hlslpp::normalize(camera.invViewMatrix[2].xyz);
++        const hlslpp::float3 up = iosNearestAxis(camera.invViewMatrix[1].xyz);
++        if (!iosFinite(position) || !iosFinite(back) || !std::isfinite(scale) || (scale <= 0.0f)) {
++            return false;
++        }
++
++        hlslpp::float3 forward = -back;
++        hlslpp::float3 right = hlslpp::cross(forward, up);
++        if (float(hlslpp::length(right)) < 0.01f) {
++            right = hlslpp::float3(camera.invViewMatrix[0].xyz);
++        }
++
++        right = hlslpp::normalize(right);
++        const hlslpp::float3 viewUp = hlslpp::normalize(hlslpp::cross(right, forward));
++
++        // The game's own camera and Dash, in its units (z up). Place Dash
++        // the same way relative to RT64's camera. World units per game unit:
++        // the game camera and RT64's sit at the same point when the spaces
++        // only differ by scale; otherwise assume 1. Without Dash, orbit a
++        // point a little ahead of the camera.
++        hlslpp::float3 pivot = position + forward * 25.0f;
++        if (iosFreezeHasEye.load() && iosFreezeHasPivot.load()) {
++            const hlslpp::float3 eye(iosFreezeEye[0].load(), iosFreezeEye[1].load(), iosFreezeEye[2].load());
++            const hlslpp::float3 player(iosFreezePivot[0].load(), iosFreezePivot[1].load(), iosFreezePivot[2].load());
++            const hlslpp::float3 gameForward = hlslpp::normalize(hlslpp::float3(iosFreezeForward[0].load(), iosFreezeForward[1].load(), iosFreezeForward[2].load()));
++            const hlslpp::float3 gameUpAxis(0.0f, 0.0f, 1.0f);
++            hlslpp::float3 gameRight = hlslpp::cross(gameForward, gameUpAxis);
++            if (iosFinite(eye) && iosFinite(player) && iosFinite(gameForward) && (float(hlslpp::length(gameRight)) > 0.01f)) {
++                gameRight = hlslpp::normalize(gameRight);
++                const hlslpp::float3 gameUp = hlslpp::normalize(hlslpp::cross(gameRight, gameForward));
++                float unit = 1.0f;
++                const float eyeLength = float(hlslpp::length(eye));
++                const float positionLength = float(hlslpp::length(position));
++                if ((eyeLength > 1.0f) && (positionLength > 0.0f) &&
++                    (float(hlslpp::dot(eye / eyeLength, position / positionLength)) > 0.995f)) {
++                    unit = positionLength / eyeLength;
++                }
++
++                const hlslpp::float3 offset = player - eye;
++                const float along = float(hlslpp::dot(offset, gameForward));
++                const float side = float(hlslpp::dot(offset, gameRight));
++                const float lift = float(hlslpp::dot(offset, gameUp));
++                const float reach = float(hlslpp::length(offset));
++                if ((along > 0.0f) && (reach < 2000.0f)) {
++                    pivot = position + (forward * along + right * side + viewUp * lift) * unit;
++                }
++            }
 +        }
 +
 +        const hlslpp::float3 offset = position - pivot;
++        hlslpp::float3 flatBack = back - up * float(hlslpp::dot(back, up));
++        if (float(hlslpp::length(flatBack)) < 0.01f) {
++            flatBack = viewUp - up * float(hlslpp::dot(viewUp, up));
++        }
++
 +        iosFreezeBase.pivot = pivot;
-+        iosFreezeBase.radius = std::max(float(hlslpp::length(offset)), 1.0f);
-+        iosFreezeBase.yaw = std::atan2(float(offset.x), float(offset.z));
-+        iosFreezeBase.pitch = std::asin(std::clamp(float(offset.y) / iosFreezeBase.radius, -1.0f, 1.0f));
++        iosFreezeBase.up = up;
++        iosFreezeBase.back = hlslpp::normalize(flatBack);
++        iosFreezeBase.across = hlslpp::normalize(hlslpp::cross(up, iosFreezeBase.back));
++        iosFreezeBase.viewScale = scale;
++        iosFreezeBase.radius = std::max(float(hlslpp::length(offset)), 0.01f);
++        iosFreezeBase.yaw = std::atan2(float(hlslpp::dot(offset, iosFreezeBase.across)), float(hlslpp::dot(offset, iosFreezeBase.back)));
++        iosFreezeBase.pitch = std::asin(std::clamp(float(hlslpp::dot(offset, up)) / iosFreezeBase.radius, -1.0f, 1.0f));
 +        debuggerInspector.paused = true;
 +        return true;
 +    }
 +
 +    void State::iosFreezeUpdateCamera() {
 +        DebuggerCamera &camera = debuggerInspector.camera;
-+        const float yaw = iosFreezeBase.yaw + iosFreezeYaw.load();
-+        const float pitch = std::clamp(iosFreezeBase.pitch + iosFreezePitch.load(), -1.4f, 1.4f);
-+        const float radius = iosFreezeBase.radius * std::clamp(iosFreezeZoom.load(), 0.15f, 4.0f);
-+        const hlslpp::float3 direction(std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw));
-+        hlslpp::float3 focus = iosFreezeBase.pivot;
-+        hlslpp::float3 position = focus + direction * radius;
-+        iosFreezeLookAt(camera, position, focus);
-+        const hlslpp::float3 pan = camera.invViewMatrix[0].xyz * (iosFreezePanX.load() * radius) +
-+            camera.invViewMatrix[1].xyz * (iosFreezePanY.load() * radius);
-+        iosFreezeLookAt(camera, position + pan, focus + pan);
++        const IosFreezeBase &base = iosFreezeBase;
++        const float yaw = base.yaw + iosFreezeYaw.load();
++        const float pitch = std::clamp(base.pitch + iosFreezePitch.load(), -1.4f, 1.4f);
++        const float radius = base.radius * std::clamp(iosFreezeZoom.load(), 0.15f, 4.0f);
++        const hlslpp::float3 direction = (base.across * std::sin(yaw) + base.back * std::cos(yaw)) * std::cos(pitch) + base.up * std::sin(pitch);
++        const hlslpp::float3 focus = base.pivot;
++        const hlslpp::float3 position = focus + direction * radius;
++        iosFreezeLookAt(camera, position, focus, base.up, base.viewScale);
++        const hlslpp::float3 pan = hlslpp::normalize(camera.invViewMatrix[0].xyz) * (iosFreezePanX.load() * radius) +
++            hlslpp::normalize(camera.invViewMatrix[1].xyz) * (iosFreezePanY.load() * radius);
++        iosFreezeLookAt(camera, position + pan, focus + pan, base.up, base.viewScale);
 +    }
 +
      void State::updateScreen(const VI &newVI, bool fromEarlyPresent) {
@@ -132,25 +218,29 @@ index 7cae864..cdc9a8a 100644
          if (debuggerInspector.paused && !fromEarlyPresent) {
              if (ext.userConfig->developerMode) {
 diff --git a/src/hle/rt64_state.h b/src/hle/rt64_state.h
-index 7a8c13b..940d2eb 100644
+index 7a8c13b..735f7b1 100644
 --- a/src/hle/rt64_state.h
 +++ b/src/hle/rt64_state.h
-@@ -32,6 +32,25 @@
+@@ -32,6 +32,29 @@
  #include "rt64_rdp_tmem.h"
  #include "rt64_workload_queue.h"
  
 +#include <atomic>
 +
 +namespace RT64 {
-+    // iOS freeze camera. The app sets iosFreezeRequested (and a pivot, the
-+    // player's position in world units); RT64 then holds the last frame and
-+    // renders it from an orbit around the pivot: yaw and pitch in radians on
-+    // top of the game's own camera angle, zoom as a factor of its distance,
-+    // pan as a fraction of it. iosFreezeActive reports when that is live.
++    // iOS freeze camera. The app sets iosFreezeRequested, with the game's
++    // own camera (eye and forward) and a pivot (the player), both in the
++    // game's world units; RT64 then holds the last frame and renders it from
++    // an orbit around the pivot: yaw and pitch in radians on top of the
++    // game's own camera angle, zoom as a factor of its distance, pan as a
++    // fraction of it. iosFreezeActive reports when that is live.
 +    extern std::atomic<bool> iosFreezeRequested;
 +    extern std::atomic<bool> iosFreezeActive;
 +    extern std::atomic<bool> iosFreezeHasPivot;
 +    extern std::atomic<float> iosFreezePivot[3];
++    extern std::atomic<bool> iosFreezeHasEye;
++    extern std::atomic<float> iosFreezeEye[3];
++    extern std::atomic<float> iosFreezeForward[3];
 +    extern std::atomic<float> iosFreezeYaw;
 +    extern std::atomic<float> iosFreezePitch;
 +    extern std::atomic<float> iosFreezeZoom;
@@ -161,7 +251,7 @@ index 7a8c13b..940d2eb 100644
  namespace RT64 {
      struct Application;
      struct Interpreter;
-@@ -148,6 +167,8 @@ namespace RT64 {
+@@ -148,6 +171,8 @@ namespace RT64 {
          void fullSyncFramebufferPairTiles(Workload &workload, FramebufferPair &fbPair, uint32_t &loadOpCursor, uint32_t &rdpTileCursor);
          void listProcessBegin();
          void listProcessEnd();
