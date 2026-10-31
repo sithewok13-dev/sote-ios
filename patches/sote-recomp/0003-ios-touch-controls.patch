@@ -1,0 +1,25 @@
+diff --git a/src/frontend.cpp b/src/frontend.cpp
+index ba07566..d7b80d7 100644
+--- a/src/frontend.cpp
++++ b/src/frontend.cpp
+@@ -1228,6 +1228,20 @@ void poll_input() {
+         if (key_down('W')) keyboard_y += n64_stick_scale;
+         if (key_down('S')) keyboard_y -= n64_stick_scale;
+     }
++#ifndef _WIN32
++    // iOS on-screen controls: N64 buttons, and a stick that moves like the
++    // keyboard's (through the Modern hooks too), scaled to the N64 range.
++    uint16_t touch_buttons = 0;
++    float touch_x = 0.0f;
++    float touch_y = 0.0f;
++    if (sote::platform::touch_input(&touch_buttons, &touch_x, &touch_y)) {
++        buttons |= touch_buttons;
++        if (touch_x != 0.0f || touch_y != 0.0f) {
++            keyboard_x = touch_x * n64_stick_scale;
++            keyboard_y = touch_y * n64_stick_scale;
++        }
++    }
++#endif
+     // Feed keyboard movement and relative mouse look to the same Modern guest
+     // hooks used by the controller, including when no gamepad is connected.
+     const sote::modern_controls::Stick modern_move =

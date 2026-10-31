@@ -4,6 +4,7 @@
 // ios/game/sote_platform_ios.mm; used by the iOS branches that
 // patches/sote-recomp adds to main.cpp, frontend.cpp and rt64_renderer.cpp.
 
+#include <cstdint>
 #include <filesystem>
 
 #include "ultramodern/renderer_context.hpp"
@@ -22,4 +23,8 @@ namespace sote::platform {
 
     // Keyboard state for a Win32 virtual-key code (hardware keyboards later).
     bool key_down(int virtual_key);
+
+    // On-screen controls: N64 button bits and a stick in [-1, 1] (up is +y).
+    // Returns false when no control is held.
+    bool touch_input(uint16_t *buttons, float *x, float *y);
 }

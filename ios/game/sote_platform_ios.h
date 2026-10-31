@@ -1,13 +1,15 @@
 #pragma once
 
+#include <cstdint>
+
 namespace sote::platform {
     // Called by the app before the game starts: the UIView the game draws in
     // and its CAMetalLayer.
     void ios_set_game_view(void *view, void *layer);
 
-    // Holds the game's Start key (Enter) down briefly, as a tap on the screen
-    // does: it starts the game, opens the pause menu and skips story screens.
-    void ios_press_start();
+    // Called by the on-screen controls whenever they change: N64 button bits
+    // and a stick in [-1, 1].
+    void ios_set_touch_input(uint16_t buttons, float x, float y);
 }
 
 // SotE-Recomp's main(), renamed by patches/sote-recomp for iOS. Blocks until

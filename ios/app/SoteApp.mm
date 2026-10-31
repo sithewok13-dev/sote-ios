@@ -25,6 +25,7 @@
 #if SOTE_WITH_GAME
 #include "rom_import.h"
 #include "sote_platform_ios.h"
+#import "touch_controls.h"
 
 static NSString *lastLines(NSURL *file, NSUInteger count);
 #endif
@@ -161,17 +162,22 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
     gameThread.qualityOfService = NSQualityOfServiceUserInteractive;
     [gameThread start];
 
-    // A tap presses Start (begin the game, pause, skip story screens) until
-    // touch controls exist. A two-finger tap shows or hides the game's log
-    // over the view.
+    // On-screen controller over the game. Its small "log" button shows or
+    // hides the game's log over the view.
     _statusLabel.font = [UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightRegular];
     _statusLabel.backgroundColor = [UIColor colorWithWhite:0 alpha:0.6];
     _statusLabel.hidden = YES;
     _metalView.userInteractionEnabled = YES;
-    [_metalView addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(pressStart)]];
-    UITapGestureRecognizer *twoFingerTap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(toggleLog)];
-    twoFingerTap.numberOfTouchesRequired = 2;
-    [_metalView addGestureRecognizer:twoFingerTap];
+    SoteTouchControlsView *controls = [[SoteTouchControlsView alloc] initWithFrame:_metalView.bounds];
+    controls.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    controls.toggleLog = ^{
+        SoteViewController *strongSelf = weakSelf;
+        if (strongSelf != nil) {
+            [strongSelf toggleLog];
+        }
+    };
+    [_metalView addSubview:controls];
+    [_metalView bringSubviewToFront:_statusLabel];
     NSURL *logs = [documents URLByAppendingPathComponent:@"logs"];
     [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *timer) {
         SoteViewController *strongSelf = weakSelf;
@@ -180,14 +186,10 @@ static NSString *lastLines(NSURL *file, NSUInteger count);
             return;
         }
 
-        strongSelf->_statusLabel.text = [NSString stringWithFormat:@"SotE log (two-finger tap to hide)\n%@\n-- errors --\n%@",
+        strongSelf->_statusLabel.text = [NSString stringWithFormat:@"SotE log\n%@\n-- errors --\n%@",
             lastLines([logs URLByAppendingPathComponent:@"sote-latest.log"], 10),
             lastLines([logs URLByAppendingPathComponent:@"sote-latest-errors.log"], 10)];
     }];
-}
-
-- (void)pressStart {
-    sote::platform::ios_press_start();
 }
 
 - (void)toggleLog {

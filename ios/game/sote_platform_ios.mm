@@ -6,21 +6,18 @@
 #import <Foundation/Foundation.h>
 
 #include <atomic>
-#include <chrono>
 
 namespace sote::platform {
     static std::atomic<void *> game_view{nullptr};
     static std::atomic<void *> game_layer{nullptr};
-    static std::atomic<int64_t> start_held_until_ms{0};
+    static std::atomic<uint32_t> touch_buttons{0};
+    static std::atomic<float> touch_x{0.0f};
+    static std::atomic<float> touch_y{0.0f};
 
-    static int64_t now_ms() {
-        return std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
-    }
-
-    void ios_press_start() {
-        // Long enough for the game to poll it at least a few times.
-        start_held_until_ms.store(now_ms() + 200);
+    void ios_set_touch_input(uint16_t buttons, float x, float y) {
+        touch_x.store(x);
+        touch_y.store(y);
+        touch_buttons.store(buttons);
     }
 
     void ios_set_game_view(void *view, void *layer) {
@@ -42,9 +39,14 @@ namespace sote::platform {
 
     void update_gfx() {}
 
-    bool key_down(int virtual_key) {
-        // Enter is the PC release's Start key.
-        constexpr int VirtualKeyReturn = 0x0D;
-        return (virtual_key == VirtualKeyReturn) && (now_ms() < start_held_until_ms.load());
+    bool key_down(int) {
+        return false;
+    }
+
+    bool touch_input(uint16_t *buttons, float *x, float *y) {
+        *buttons = static_cast<uint16_t>(touch_buttons.load());
+        *x = touch_x.load();
+        *y = touch_y.load();
+        return (*buttons != 0) || (*x != 0.0f) || (*y != 0.0f);
     }
 }

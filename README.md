@@ -18,7 +18,7 @@ Planning notes live in `jk-files` (branch `wip-sote-ios`).
 | iOS shell: UIKit app, plume on Metal, rdram reservation probe | works on device (0.1.2) |
 | RT64 on iOS: builds, 56 shaders compiled to Metal libraries | builds (0.2.0); not yet run on device |
 | Game layer: SotE-Recomp's code (now MIT) on iOS | compiles for iOS; first playable build pending (0.4.0) |
-| Touch controls (IOSTouch overlay) | later |
+| Touch controls (on-screen N64 controller) | first version (0.7.0) |
 
 The game layer comes from [SotE-Recomp] by GTTeancum, who licensed its original
 code under MIT on 2026-10-28 (commit `7aec3d4`, answering issue #21) and
@@ -77,6 +77,8 @@ upstream commits SotE-Recomp uses.
   Metal view to RT64.
   `0002` lets the app force SotE-Recomp's compatibility graphics profile
   (no MSAA, standard color), to test whether those cause the black screen.
+  `0003` feeds the on-screen controls (`ios/app/touch_controls.mm`) into the
+  game's N64 input.
 - `ios/game/`: the `sote_game` library: SotE-Recomp's game code plus
   `sote_platform_ios.mm` (Documents folder, Metal view, keyboard stub) and
   `sote_win32_compat.h` (the few Win32 names it uses elsewhere: key codes,
@@ -128,9 +130,12 @@ not cover ROM-derived code or the game's names, art and media.
    **Files > On My iPhone > SotE**: a `.z64`, `.v64` or `.n64` file under any
    name, or a `.zip` with one inside. The app converts it to
    `sote.us.v1.2.z64` on first launch and checks it is the right game.
-3. Open SotE. A game controller works. Until touch controls exist, a tap on
-   the screen presses Start (begin, pause, skip the story screens), and a
-   two-finger tap shows the game's log.
+3. Open SotE. An on-screen N64 controller is drawn over the game: a
+   floating stick (put a finger down anywhere in the lower left), A, B, Z
+   and the C buttons on the right, L and R at the top corners, a D-pad above
+   the stick and Start at the bottom; Start skips the story screens. A game
+   controller works too. The small "log" button at the top shows the game's
+   log.
 
 If anything goes wrong, `sote-log.txt` and the `logs` folder in the same
 place say what happened.
