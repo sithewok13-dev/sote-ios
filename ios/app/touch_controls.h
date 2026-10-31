@@ -2,13 +2,18 @@
 
 #import <UIKit/UIKit.h>
 
-// On-screen N64 controller drawn over the game: a floating analog stick on the
-// left, A/B/Z and the C buttons on the right, L and R at the top corners, a
-// D-pad above the stick and Start at the bottom. Every change is passed to the
-// game through sote::platform::ios_set_touch_input.
+// On-screen N64 controller drawn over the game, in the house style shared
+// with the other ports (jk-files docs/HOUSE_STYLE.md, section 3):
+//  - a floating stick in the lower left; drag anywhere else to look;
+//  - A, B and the C buttons on the right, Z under L, L and R at the top;
+//  - START at the bottom: a tap presses Start, a 0.45 s hold (ring) opens
+//    the tray: GYRO, SENS, OPACITY, CAMERA, CHEAT, D-PAD, LOG;
+//  - optional top-row buttons: CAMERA (tap a photo, slide sideways for a
+//    burst), CHEAT (hold 0.5 s to switch the cheats) and LEVEL (cheat on).
+// Settings are kept in NSUserDefaults under iosTouch* keys.
 @interface SoteTouchControlsView : UIView
 
-// Called when the small "log" button at the top is tapped.
+// Called when the tray's LOG button is tapped.
 @property (nonatomic, copy) void (^toggleLog)(void);
 
 @end

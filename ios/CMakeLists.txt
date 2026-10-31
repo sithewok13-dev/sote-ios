@@ -43,6 +43,15 @@ target_link_libraries(sote PRIVATE
 if(TARGET sote_rom)
     target_compile_definitions(sote PRIVATE SOTE_WITH_GAME=1)
     target_include_directories(sote PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/game")
-    target_sources(sote PRIVATE app/rom_import.cpp app/rom_import.h app/touch_controls.h app/touch_controls.mm)
-    target_link_libraries(sote PRIVATE sote_game sote_rom miniz)
+    target_sources(sote PRIVATE
+        app/rom_import.cpp app/rom_import.h
+        app/touch_controls.h app/touch_controls.mm
+        app/ios_photos.h app/ios_photos.mm
+        app/ios_cheat.h app/ios_cheat.mm)
+    target_include_directories(sote PRIVATE "${SOTE_RECOMP_DIR}/src")
+    target_link_libraries(sote PRIVATE sote_game sote_rom miniz
+        "-framework Photos"
+        "-framework CoreMotion"
+        "-framework AVFoundation"
+        "-framework AudioToolbox")
 endif()

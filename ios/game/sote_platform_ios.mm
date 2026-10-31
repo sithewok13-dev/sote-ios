@@ -7,6 +7,8 @@
 
 #include <atomic>
 
+#include "frontend.hpp"
+
 namespace sote::platform {
     static std::atomic<void *> game_view{nullptr};
     static std::atomic<void *> game_layer{nullptr};
@@ -18,6 +20,20 @@ namespace sote::platform {
         touch_x.store(x);
         touch_y.store(y);
         touch_buttons.store(buttons);
+    }
+
+    static std::atomic<int> level_jump{-1};
+
+    void ios_request_level_jump(int event) {
+        level_jump.store(event);
+    }
+
+    int take_level_jump() {
+        return level_jump.exchange(-1);
+    }
+
+    void ios_add_look(int x, int y) {
+        sote::frontend::add_mouse_delta(x, y);
     }
 
     void ios_set_game_view(void *view, void *layer) {

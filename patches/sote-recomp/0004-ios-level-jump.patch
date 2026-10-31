@@ -1,0 +1,26 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 47683d7..312214e 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -2864,6 +2864,21 @@ void on_vi() {
+             entry = comma != nullptr ? comma + 1 : nullptr;
+         }
+     }
++#ifndef _WIN32
++    // iOS level selector: jump to the event that starts the chosen level,
++    // the same way as SOTE_DIAGNOSTIC_EVENT_JUMPS above.
++    if (game_rdram != nullptr) {
++        const int event = sote::platform::take_level_jump();
++        if (event >= 0) {
++            write_guest_half(
++                game_rdram, 0x800D255CU, static_cast<uint16_t>(event));
++            write_guest_byte(game_rdram, 0x800D2558U, 2);
++            std::printf("[sote] level selector jump to event %d at VI=%d\n",
++                event, count);
++            std::fflush(stdout);
++        }
++    }
++#endif
+     if (std::getenv("SOTE_TRACE_FINAL_EVENT") != nullptr &&
+         game_rdram != nullptr && count % 60 == 0) {
+         std::printf("[sote][final-event] VI=%d event=%d result=%d transition=%u destination=%d\n",

@@ -18,7 +18,7 @@ Planning notes live in `jk-files` (branch `wip-sote-ios`).
 | iOS shell: UIKit app, plume on Metal, rdram reservation probe | works on device (0.1.2) |
 | RT64 on iOS: builds, 56 shaders compiled to Metal libraries | builds (0.2.0); not yet run on device |
 | Game layer: SotE-Recomp's code (now MIT) on iOS | compiles for iOS; first playable build pending (0.4.0) |
-| Touch controls (on-screen N64 controller) | first version (0.7.0) |
+| Touch controls, tray, camera, cheats, level selector, gyro | 0.8.0 |
 
 The game layer comes from [SotE-Recomp] by GTTeancum, who licensed its original
 code under MIT on 2026-10-28 (commit `7aec3d4`, answering issue #21) and
@@ -54,6 +54,7 @@ upstream commits SotE-Recomp uses.
   RT64's texture decoder included, wrote nothing: the black screen).
   `0002` logs RT64's present path (swap chain resize, empty swap chain,
   failed acquire or present) while the game shows a black screen.
+  `0003` copies presented frames for the camera button.
 - `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
   configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
   `CAMetalLayer.displaySyncEnabled`) that abort on iOS. `0002` lets Metal
@@ -79,6 +80,7 @@ upstream commits SotE-Recomp uses.
   (no MSAA, standard color), to test whether those cause the black screen.
   `0003` feeds the on-screen controls (`ios/app/touch_controls.mm`) into the
   game's N64 input.
+  `0004` lets the level selector jump to a level's first event.
 - `ios/game/`: the `sote_game` library: SotE-Recomp's game code plus
   `sote_platform_ios.mm` (Documents folder, Metal view, keyboard stub) and
   `sote_win32_compat.h` (the few Win32 names it uses elsewhere: key codes,
@@ -130,12 +132,21 @@ not cover ROM-derived code or the game's names, art and media.
    **Files > On My iPhone > SotE**: a `.z64`, `.v64` or `.n64` file under any
    name, or a `.zip` with one inside. The app converts it to
    `sote.us.v1.2.z64` on first launch and checks it is the right game.
-3. Open SotE. An on-screen N64 controller is drawn over the game: a
-   floating stick (put a finger down anywhere in the lower left), A, B, Z
-   and the C buttons on the right, L and R at the top corners, a D-pad above
-   the stick and Start at the bottom; Start skips the story screens. A game
-   controller works too. The small "log" button at the top shows the game's
-   log.
+3. Open SotE. The on-screen controls follow the house style of the other
+   ports (`jk-files` docs/HOUSE_STYLE.md, section 3):
+   - a floating stick in the lower left; drag anywhere else to look;
+   - A, B and the C buttons on the right, Z under L, L and R at the top;
+   - START at the bottom: tap for Start (begin, pause, skip story screens);
+     hold 0.45 s (a ring fills) for the tray: GYRO (off / while touching /
+     always), SENS, OPACITY (slider; hold to reset), CAM, CHEAT, DPAD, LOG;
+   - CAMERA (top row): tap for a photo, slide sideways for a burst (every
+     0.2 s, up to 10). Photos go to your library, or to Files > SotE >
+     Screenshots without access;
+   - CHEAT (shown from the tray): hold 0.5 s to switch infinite health,
+     lives, ammo, missiles and vehicle health; it plays a random clip from
+     Files > SotE > Cheat Sounds (your own clips);
+   - LVL (with the cheat on): jump to any of the ten levels.
+   A game controller works too.
 
 If anything goes wrong, `sote-log.txt` and the `logs` folder in the same
 place say what happened.

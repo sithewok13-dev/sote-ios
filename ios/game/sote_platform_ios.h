@@ -10,6 +10,13 @@ namespace sote::platform {
     // Called by the on-screen controls whenever they change: N64 button bits
     // and a stick in [-1, 1].
     void ios_set_touch_input(uint16_t buttons, float x, float y);
+
+    // Asks the game to jump to an event record (the start of a level).
+    void ios_request_level_jump(int event);
+
+    // Relative look from touch drags and the gyro, in mouse counts. Feeds the
+    // game's own mouse look (Modern on foot, and vehicle steering).
+    void ios_add_look(int x, int y);
 }
 
 // SotE-Recomp's main(), renamed by patches/sote-recomp for iOS. Blocks until

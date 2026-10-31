@@ -1,10 +1,18 @@
-// On-screen N64 controller (see touch_controls.h).
+// On-screen N64 controller, tray and extras (see touch_controls.h).
 
 #import "touch_controls.h"
 
+#import <AudioToolbox/AudioToolbox.h>
+#import <CoreMotion/CoreMotion.h>
+
+#include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <unordered_map>
 #include <vector>
 
+#include "ios_cheat.h"
+#include "ios_photos.h"
 #include "sote_platform_ios.h"
 
 namespace {
@@ -24,39 +32,147 @@ namespace {
     constexpr uint16_t N64CLeft = 0x0002;
     constexpr uint16_t N64CRight = 0x0001;
 
-    // How far the stick's knob travels from its base, in points.
-    constexpr CGFloat StickRange = 56.0;
-    constexpr CGFloat StickDeadZone = 0.12;
+    // House style values (HOUSE_STYLE.md 3.1).
+    constexpr CGFloat IdleAlpha = 0.65;
+    constexpr CGFloat TouchSlop = 6.0;
+    constexpr CGFloat StickRadius = 60.0;
+    constexpr CGFloat StickKnob = 24.0;
+    constexpr CGFloat StickDeadZone = 0.15;
+    constexpr CGFloat StickAreaFraction = 0.42;
+    constexpr double MenuHold = 0.45;
+    constexpr double CheatHold = 0.5;
+    constexpr double StartPulse = 0.15;
+    constexpr CGFloat HoldMoveLimit = 12.0;
+    constexpr CGFloat TrayRadius = 20.0;
+    constexpr CGFloat TrayStep = 50.0;
+    constexpr CGFloat BurstSlide = 10.0;
+    constexpr double BurstPeriod = 0.2;
+    constexpr int BurstMax = 10;
+    constexpr double ToastTime = 1.6;
 
-    struct Button {
+    // Look: mouse counts per point dragged, and per degree the phone turns.
+    constexpr CGFloat LookCountsPerPoint = 2.0;
+    constexpr double GyroCountsPerDegree = 6.0;
+    constexpr double GyroDeadZone = 1.5;
+    constexpr double GyroSens[] = { 1.0, 1.5, 2.0, 3.0 };
+
+    enum class Kind { N64, Menu, Cheat, Camera, Level, Tray };
+    enum class TrayItem { None, Gyro, Sens, Opacity, Camera, Cheat, Dpad, Log };
+    enum class GyroMode { Off = 0, Touch = 1, Always = 2 };
+    enum class Role { None, Stick, Look, Control };
+
+    // The ten levels and the event that starts each (SotE-Recomp's
+    // event_matches_level).
+    struct Level {
+        NSString *name;
+        int event;
+    };
+
+    const Level Levels[] = {
+        { @"Battle of Hoth", 3 },
+        { @"Escape from Echo Base", 4 },
+        { @"Asteroid Field", 6 },
+        { @"Ord Mantell Junkyard", 7 },
+        { @"Gall Spaceport", 11 },
+        { @"Mos Eisley and Beggar's Canyon", 16 },
+        { @"Imperial Freighter Suprosa", 18 },
+        { @"Sewers of Imperial City", 24 },
+        { @"Xizor's Palace", 26 },
+        { @"Skyhook Battle", 28 },
+    };
+
+    struct Control {
+        Kind kind;
         uint16_t bit;
+        TrayItem tray;
         NSString *label;
-        UIColor *color;
+        UIColor *accent;
         CGFloat radius;
+        bool pill;
         CGPoint center;
+        bool visible;
+        CALayer *group;
         CAShapeLayer *shape;
         CATextLayer *text;
+        CAShapeLayer *ring;
+    };
+
+    struct TouchState {
+        Role role = Role::None;
+        int control = -1;
+        CGPoint start = CGPointZero;
+        CGPoint last = CGPointZero;
+        CFTimeInterval down = 0;
+        bool moved = false;
+        bool fired = false;
+        bool burst = false;
+        int burstShots = 0;
+        CFTimeInterval nextBurst = 0;
     };
 
     CGFloat distance(CGPoint a, CGPoint b) {
         return std::hypot(a.x - b.x, a.y - b.y);
     }
+
+    UIColor *Gold() {
+        return [UIColor colorWithRed:1.0 green:0.85 blue:0.3 alpha:0.95];
+    }
+
+    UIColor *RingBlue() {
+        return [UIColor colorWithRed:0.47 green:0.78 blue:1.0 alpha:0.95];
+    }
+
+    UIColor *CheatRed() {
+        return [UIColor colorWithRed:0.9 green:0.32 blue:0.28 alpha:1.0];
+    }
+
+    // Read by the gyro's queue.
+    std::atomic<int> gyroMode{0};
+    std::atomic<int> gyroSensIndex{1};
+    std::atomic<bool> gyroThumbDown{false};
+    std::atomic<bool> gyroSuppressed{false};
+    std::atomic<int> gyroLandscapeSign{1};
 }
 
 @implementation SoteTouchControlsView {
-    std::vector<Button> _buttons;
-    NSMutableSet<UITouch *> *_touches;
+    std::vector<Control> _controls;
+    std::unordered_map<void *, TouchState> _touches;
+    CADisplayLink *_displayLink;
+    CMMotionManager *_motion;
+    NSOperationQueue *_motionQueue;
+
+    // Stick.
     UITouch *_stickTouch;
     CGPoint _stickHome;
     CGPoint _stickOrigin;
     CGPoint _stickKnob;
-    CGRect _stickArea;
     CAShapeLayer *_stickBase;
     CAShapeLayer *_stickKnobLayer;
-    CGPoint _logCenter;
-    CATextLayer *_logText;
+
+    // Tray, opacity row, toast, level card.
+    bool _trayOpen;
+    UIView *_trayBacking;
+    UIView *_opacityRow;
+    UISlider *_opacitySlider;
+    UILabel *_toast;
+    CFTimeInterval _toastUntil;
+    UIView *_levelCard;
+    UIView *_flash;
+
+    // State.
+    CFTimeInterval _startUntil;
     uint16_t _pressed;
+    CGFloat _opacity;
+    bool _showCheat;
+    bool _cheatOn;
+    bool _showCamera;
+    bool _showDpad;
+    int _photosPending;
+    int _photosToPhotos;
+    int _photosToFiles;
 }
+
+#pragma mark - Setup
 
 - (instancetype)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
@@ -66,56 +182,138 @@ namespace {
 
     self.backgroundColor = UIColor.clearColor;
     self.multipleTouchEnabled = YES;
-    _touches = [NSMutableSet set];
+    [self loadSettings];
 
-    UIColor *gray = [UIColor colorWithWhite:0.85 alpha:1.0];
-    UIColor *green = [UIColor colorWithRed:0.25 green:0.85 blue:0.35 alpha:1.0];
-    UIColor *blue = [UIColor colorWithRed:0.30 green:0.55 blue:1.00 alpha:1.0];
-    UIColor *yellow = [UIColor colorWithRed:1.00 green:0.85 blue:0.20 alpha:1.0];
-    UIColor *red = [UIColor colorWithRed:1.00 green:0.35 blue:0.30 alpha:1.0];
-    _buttons = {
-        { N64A, @"A", green, 36 },
-        { N64B, @"B", blue, 30 },
-        { N64Z, @"Z", gray, 28 },
-        { N64CUp, @"▲", yellow, 18 },
-        { N64CDown, @"▼", yellow, 18 },
-        { N64CLeft, @"◀", yellow, 18 },
-        { N64CRight, @"▶", yellow, 18 },
-        { N64L, @"L", gray, 26 },
-        { N64R, @"R", gray, 26 },
-        { N64Start, @"START", red, 24 },
-        { N64DUp, @"↑", gray, 17 },
-        { N64DDown, @"↓", gray, 17 },
-        { N64DLeft, @"←", gray, 17 },
-        { N64DRight, @"→", gray, 17 },
+    UIColor *white = [UIColor colorWithWhite:1.0 alpha:0.4];
+    UIColor *green = [UIColor colorWithRed:0.35 green:0.9 blue:0.45 alpha:0.6];
+    UIColor *blue = [UIColor colorWithRed:0.45 green:0.65 blue:1.0 alpha:0.6];
+    UIColor *yellow = [UIColor colorWithRed:1.0 green:0.85 blue:0.3 alpha:0.6];
+    UIColor *red = [UIColor colorWithRed:1.0 green:0.45 blue:0.4 alpha:0.6];
+    _controls = {
+        { Kind::N64, N64A, TrayItem::None, @"A", green, 40, false },
+        { Kind::N64, N64B, TrayItem::None, @"B", blue, 32, false },
+        { Kind::N64, N64CUp, TrayItem::None, @"▲", yellow, 19, false },
+        { Kind::N64, N64CDown, TrayItem::None, @"▼", yellow, 19, false },
+        { Kind::N64, N64CLeft, TrayItem::None, @"◀", yellow, 19, false },
+        { Kind::N64, N64CRight, TrayItem::None, @"▶", yellow, 19, false },
+        { Kind::N64, N64Z, TrayItem::None, @"Z", white, 30, false },
+        { Kind::N64, N64L, TrayItem::None, @"L", white, 22, true },
+        { Kind::N64, N64R, TrayItem::None, @"R", white, 22, true },
+        { Kind::N64, N64DUp, TrayItem::None, @"↑", white, 17, false },
+        { Kind::N64, N64DDown, TrayItem::None, @"↓", white, 17, false },
+        { Kind::N64, N64DLeft, TrayItem::None, @"←", white, 17, false },
+        { Kind::N64, N64DRight, TrayItem::None, @"→", white, 17, false },
+        { Kind::Menu, 0, TrayItem::None, @"START", red, 22, true },
+        { Kind::Camera, 0, TrayItem::None, @"", white, 22, false },
+        { Kind::Cheat, 0, TrayItem::None, @"", white, 22, false },
+        { Kind::Level, 0, TrayItem::None, @"LVL", Gold(), 22, false },
+        { Kind::Tray, 0, TrayItem::Gyro, @"GYRO", white, TrayRadius, false },
+        { Kind::Tray, 0, TrayItem::Sens, @"SENS", white, TrayRadius, false },
+        { Kind::Tray, 0, TrayItem::Opacity, @"OPAC", white, TrayRadius, false },
+        { Kind::Tray, 0, TrayItem::Camera, @"CAM", white, TrayRadius, false },
+        { Kind::Tray, 0, TrayItem::Cheat, @"CHEAT", white, TrayRadius, false },
+        { Kind::Tray, 0, TrayItem::Dpad, @"DPAD", white, TrayRadius, false },
+        { Kind::Tray, 0, TrayItem::Log, @"LOG", white, TrayRadius, false },
     };
 
-    for (Button &button : _buttons) {
-        button.shape = [CAShapeLayer layer];
-        button.shape.lineWidth = 2.0;
-        [self.layer addSublayer:button.shape];
-        button.text = [self textLayer:button.label size:(button.radius > 20 ? 16 : 12)];
-        [self.layer addSublayer:button.text];
-    }
+    _trayBacking = [[UIView alloc] init];
+    _trayBacking.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.55];
+    _trayBacking.layer.cornerRadius = 26;
+    _trayBacking.layer.borderWidth = 1.5;
+    _trayBacking.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.4].CGColor;
+    _trayBacking.userInteractionEnabled = NO;
+    _trayBacking.hidden = YES;
+    [self addSubview:_trayBacking];
 
     _stickBase = [CAShapeLayer layer];
-    _stickBase.fillColor = [UIColor colorWithWhite:1.0 alpha:0.10].CGColor;
-    _stickBase.strokeColor = [UIColor colorWithWhite:1.0 alpha:0.35].CGColor;
-    _stickBase.lineWidth = 2.0;
+    _stickBase.fillColor = [UIColor colorWithWhite:0.0 alpha:0.22].CGColor;
+    _stickBase.strokeColor = [UIColor colorWithWhite:1.0 alpha:0.4].CGColor;
+    _stickBase.lineWidth = 1.5;
     [self.layer addSublayer:_stickBase];
     _stickKnobLayer = [CAShapeLayer layer];
-    _stickKnobLayer.fillColor = [UIColor colorWithWhite:1.0 alpha:0.35].CGColor;
+    _stickKnobLayer.fillColor = [UIColor colorWithWhite:1.0 alpha:0.30].CGColor;
+    _stickKnobLayer.strokeColor = [UIColor colorWithWhite:1.0 alpha:0.5].CGColor;
+    _stickKnobLayer.lineWidth = 1.5;
     [self.layer addSublayer:_stickKnobLayer];
 
-    _logText = [self textLayer:@"log" size:11];
-    _logText.opacity = 0.5;
-    [self.layer addSublayer:_logText];
+    for (Control &control : _controls) {
+        [self buildControl:control];
+    }
+
+    [self buildOpacityRow];
+    _toast = [[UILabel alloc] init];
+    _toast.font = [UIFont boldSystemFontOfSize:14];
+    _toast.textColor = UIColor.whiteColor;
+    _toast.textAlignment = NSTextAlignmentCenter;
+    _toast.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.6];
+    _toast.layer.cornerRadius = 12;
+    _toast.layer.masksToBounds = YES;
+    _toast.hidden = YES;
+    [self addSubview:_toast];
+
+    _flash = [[UIView alloc] init];
+    _flash.backgroundColor = UIColor.whiteColor;
+    _flash.alpha = 0.0;
+    _flash.userInteractionEnabled = NO;
+    [self addSubview:_flash];
+
+    __weak SoteTouchControlsView *weakSelf = self;
+    sote_photos_install();
+    sote_photos_set_saved_handler(^(BOOL toPhotos) {
+        [weakSelf photoSaved:toPhotos];
+    });
+    if (_showCamera) {
+        sote_photos_request_access();
+    }
+
+    sote_cheat_set(_cheatOn);
+    [self startGyro];
     return self;
 }
 
-- (CATextLayer *)textLayer:(NSString *)string size:(CGFloat)size {
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    [_displayLink invalidate];
+    _displayLink = nil;
+    if (self.window != nil) {
+        _displayLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
+        [_displayLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    }
+}
+
+- (void)loadSettings {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [defaults registerDefaults:@{
+        @"iosTouchGyroMode": @0,
+        @"iosTouchGyroSens": @1,
+        @"iosTouchOpacity": @1.0,
+        @"iosTouchShowCheat": @NO,
+        @"iosTouchCheatOn": @NO,
+        @"iosTouchShowCamera": @YES,
+        @"iosTouchShowDpad": @NO,
+    }];
+    gyroMode.store(int([defaults integerForKey:@"iosTouchGyroMode"]) % 3);
+    gyroSensIndex.store(int([defaults integerForKey:@"iosTouchGyroSens"]) % 4);
+    _opacity = std::clamp(CGFloat([defaults doubleForKey:@"iosTouchOpacity"]), CGFloat(0.2), CGFloat(1.0));
+    _showCheat = [defaults boolForKey:@"iosTouchShowCheat"];
+    _cheatOn = _showCheat && [defaults boolForKey:@"iosTouchCheatOn"];
+    _showCamera = [defaults boolForKey:@"iosTouchShowCamera"];
+    _showDpad = [defaults boolForKey:@"iosTouchShowDpad"];
+}
+
+- (void)saveSettings {
+    NSUserDefaults *defaults = NSUserDefaults.standardUserDefaults;
+    [defaults setInteger:gyroMode.load() forKey:@"iosTouchGyroMode"];
+    [defaults setInteger:gyroSensIndex.load() forKey:@"iosTouchGyroSens"];
+    [defaults setDouble:_opacity forKey:@"iosTouchOpacity"];
+    [defaults setBool:_showCheat forKey:@"iosTouchShowCheat"];
+    [defaults setBool:_cheatOn forKey:@"iosTouchCheatOn"];
+    [defaults setBool:_showCamera forKey:@"iosTouchShowCamera"];
+    [defaults setBool:_showDpad forKey:@"iosTouchShowDpad"];
+}
+
+- (CATextLayer *)textLayer:(CGFloat)size {
     CATextLayer *text = [CATextLayer layer];
-    text.string = string;
     text.fontSize = size;
     text.font = (__bridge CFTypeRef)[UIFont boldSystemFontOfSize:size].fontName;
     text.foregroundColor = [UIColor colorWithWhite:1.0 alpha:0.85].CGColor;
@@ -124,117 +322,814 @@ namespace {
     return text;
 }
 
+- (void)buildControl:(Control &)control {
+    control.group = [CALayer layer];
+    control.shape = [CAShapeLayer layer];
+    control.shape.lineWidth = 1.5;
+    [control.group addSublayer:control.shape];
+    const CGFloat size = (control.radius >= 30) ? 16 : (control.radius >= 20 ? 13 : 10);
+    control.text = [self textLayer:(control.kind == Kind::Tray ? 10 : size)];
+    control.text.string = control.label;
+    [control.group addSublayer:control.text];
+    control.ring = [CAShapeLayer layer];
+    control.ring.fillColor = UIColor.clearColor.CGColor;
+    control.ring.strokeColor = RingBlue().CGColor;
+    control.ring.lineWidth = 3.0;
+    control.ring.strokeEnd = 0.0;
+    [control.group addSublayer:control.ring];
+    [self.layer addSublayer:control.group];
+}
+
+- (void)buildOpacityRow {
+    _opacityRow = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 300, 44)];
+    _opacityRow.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.55];
+    _opacityRow.layer.cornerRadius = 22;
+    _opacityRow.hidden = YES;
+    _opacitySlider = [[UISlider alloc] initWithFrame:CGRectMake(30, 0, 240, 44)];
+    _opacitySlider.minimumValue = 0.2f;
+    _opacitySlider.maximumValue = 1.0f;
+    _opacitySlider.value = float(_opacity);
+    _opacitySlider.minimumTrackTintColor = RingBlue();
+    [_opacitySlider addTarget:self action:@selector(opacityChanged:) forControlEvents:UIControlEventValueChanged];
+    [_opacitySlider addTarget:self action:@selector(opacityDone:) forControlEvents:UIControlEventTouchUpInside | UIControlEventTouchUpOutside];
+    [_opacityRow addSubview:_opacitySlider];
+    [self addSubview:_opacityRow];
+}
+
+#pragma mark - Layout
+
 - (void)layoutSubviews {
     [super layoutSubviews];
 
     const UIEdgeInsets insets = self.safeAreaInsets;
-    const CGFloat left = insets.left + 24;
-    const CGFloat right = self.bounds.size.width - insets.right - 24;
-    const CGFloat top = insets.top + 16;
-    const CGFloat bottom = self.bounds.size.height - insets.bottom - 16;
+    const CGFloat left = insets.left + 20;
+    const CGFloat right = self.bounds.size.width - insets.right - 20;
+    const CGFloat top = insets.top + 14;
+    const CGFloat bottom = self.bounds.size.height - insets.bottom - 14;
     const CGFloat midX = CGRectGetMidX(self.bounds);
 
-    // Right hand: A and B like the N64, Z left of them, C buttons above.
-    const CGPoint a = CGPointMake(right - 46, bottom - 60);
-    const CGPoint c = CGPointMake(right - 70, bottom - 200);
-    const CGPoint dpad = CGPointMake(left + 60, top + 120);
-    const CGPoint centers[] = {
-        a,                                      // A
-        CGPointMake(a.x - 78, a.y - 46),        // B
-        CGPointMake(a.x - 160, a.y + 10),       // Z
-        CGPointMake(c.x, c.y - 34),             // C up
-        CGPointMake(c.x, c.y + 34),             // C down
-        CGPointMake(c.x - 34, c.y),             // C left
-        CGPointMake(c.x + 34, c.y),             // C right
-        CGPointMake(left + 40, top + 30),       // L
-        CGPointMake(right - 40, top + 30),      // R
-        CGPointMake(midX, bottom - 16),         // Start
-        CGPointMake(dpad.x, dpad.y - 30),       // D-pad up
-        CGPointMake(dpad.x, dpad.y + 30),       // D-pad down
-        CGPointMake(dpad.x - 30, dpad.y),       // D-pad left
-        CGPointMake(dpad.x + 30, dpad.y),       // D-pad right
-    };
-
-    for (size_t i = 0; i < _buttons.size(); i++) {
-        Button &button = _buttons[i];
-        button.center = centers[i];
-        const CGFloat r = button.radius;
-        const CGRect rect = CGRectMake(button.center.x - r, button.center.y - r, 2 * r, 2 * r);
-        const bool pill = (button.bit == N64Start) || (button.bit == N64L) || (button.bit == N64R);
-        UIBezierPath *path = pill ?
-            [UIBezierPath bezierPathWithRoundedRect:CGRectInset(rect, -r * 0.6, r * 0.25) cornerRadius:r * 0.75] :
-            [UIBezierPath bezierPathWithOvalInRect:rect];
-        button.shape.path = path.CGPath;
-        const CGFloat textHeight = button.text.fontSize * 1.25;
-        button.text.frame = CGRectMake(button.center.x - r * 1.6, button.center.y - textHeight / 2, r * 3.2, textHeight);
+    const CGPoint a = CGPointMake(right - 48, bottom - 56);
+    const CGPoint c = CGPointMake(right - 70, bottom - 196);
+    const CGPoint dpad = CGPointMake(left + 156, top + 84);
+    const CGFloat trayY = bottom - 74;
+    int trayIndex = 0;
+    int trayCount = 0;
+    for (const Control &control : _controls) {
+        trayCount += (control.kind == Kind::Tray) ? 1 : 0;
     }
 
-    // The stick floats: it starts wherever a finger lands in the lower left
-    // of the screen, and rests here when nothing holds it.
-    _stickHome = CGPointMake(left + 90, bottom - 90);
-    _stickArea = CGRectMake(0, top + 170, midX - 60, self.bounds.size.height - top - 170);
+    for (Control &control : _controls) {
+        switch (control.kind) {
+            case Kind::N64:
+                switch (control.bit) {
+                    case N64A: control.center = a; break;
+                    case N64B: control.center = CGPointMake(a.x - 82, a.y - 44); break;
+                    case N64CUp: control.center = CGPointMake(c.x, c.y - 36); break;
+                    case N64CDown: control.center = CGPointMake(c.x, c.y + 36); break;
+                    case N64CLeft: control.center = CGPointMake(c.x - 36, c.y); break;
+                    case N64CRight: control.center = CGPointMake(c.x + 36, c.y); break;
+                    // Z sits under L like the N64's trigger, clear of the HUD's
+                    // radar in the lower right.
+                    case N64Z: control.center = CGPointMake(left + 44, top + 100); break;
+                    case N64L: control.center = CGPointMake(left + 44, top + 30); break;
+                    case N64R: control.center = CGPointMake(right - 44, top + 30); break;
+                    case N64DUp: control.center = CGPointMake(dpad.x, dpad.y - 30); break;
+                    case N64DDown: control.center = CGPointMake(dpad.x, dpad.y + 30); break;
+                    case N64DLeft: control.center = CGPointMake(dpad.x - 30, dpad.y); break;
+                    case N64DRight: control.center = CGPointMake(dpad.x + 30, dpad.y); break;
+                    default: break;
+                }
+                break;
+            case Kind::Menu: control.center = CGPointMake(midX, bottom - 16); break;
+            case Kind::Camera: control.center = CGPointMake(right - 120, top + 30); break;
+            case Kind::Cheat: control.center = CGPointMake(right - 172, top + 30); break;
+            case Kind::Level: control.center = CGPointMake(right - 224, top + 30); break;
+            case Kind::Tray:
+                control.center = CGPointMake(midX + (trayIndex - (trayCount - 1) / 2.0) * TrayStep, trayY);
+                trayIndex++;
+                break;
+        }
+
+        [self shapeControl:control];
+    }
+
+    _trayBacking.frame = CGRectMake(midX - (trayCount * TrayStep) / 2.0 - 6, trayY - 26, trayCount * TrayStep + 12, 52);
+    _opacityRow.center = CGPointMake(midX, trayY - 56);
+    _toast.frame = CGRectMake(midX - 140, top + 50, 280, 30);
+    _flash.frame = self.bounds;
+    _stickHome = CGPointMake(left + 100, bottom - 96);
     if (_stickTouch == nil) {
         _stickOrigin = _stickHome;
         _stickKnob = _stickHome;
     }
 
-    _logCenter = CGPointMake(midX, top + 6);
-    _logText.frame = CGRectMake(_logCenter.x - 30, _logCenter.y - 8, 60, 16);
-    [self redraw];
+    [self refresh];
 }
 
-- (void)redraw {
+- (CGRect)boundsForControl:(const Control &)control {
+    const CGFloat r = control.radius;
+    return control.pill ? CGRectMake(0, 0, r * 3.6, r * 1.6) : CGRectMake(0, 0, 2 * r, 2 * r);
+}
+
+- (void)shapeControl:(Control &)control {
     [CATransaction begin];
     [CATransaction setDisableActions:YES];
-    for (Button &button : _buttons) {
-        const bool down = (_pressed & button.bit) != 0;
-        button.shape.fillColor = [button.color colorWithAlphaComponent:(down ? 0.55 : 0.18)].CGColor;
-        button.shape.strokeColor = [button.color colorWithAlphaComponent:0.6].CGColor;
+    const CGRect bounds = [self boundsForControl:control];
+    control.group.bounds = bounds;
+    control.group.position = control.center;
+    control.shape.path = (control.pill ?
+        [UIBezierPath bezierPathWithRoundedRect:CGRectInset(bounds, 0.75, 0.75) cornerRadius:bounds.size.height / 2] :
+        [UIBezierPath bezierPathWithOvalInRect:CGRectInset(bounds, 0.75, 0.75)]).CGPath;
+    const CGFloat ringRadius = std::max(bounds.size.width, bounds.size.height) / 2 + 2.5;
+    control.ring.path = [UIBezierPath bezierPathWithArcCenter:CGPointMake(CGRectGetMidX(bounds), CGRectGetMidY(bounds))
+        radius:ringRadius startAngle:-M_PI_2 endAngle:3 * M_PI_2 clockwise:YES].CGPath;
+    const CGFloat textHeight = control.text.fontSize * 1.25;
+    control.text.frame = CGRectMake(0, (bounds.size.height - textHeight) / 2, bounds.size.width, textHeight);
+
+    // Icons for the top-row extras.
+    if ((control.kind == Kind::Camera) || (control.kind == Kind::Cheat)) {
+        for (CALayer *sublayer in [control.group.sublayers copy]) {
+            if ([sublayer.name isEqualToString:@"icon"]) {
+                [sublayer removeFromSuperlayer];
+            }
+        }
+
+        CAShapeLayer *icon = [CAShapeLayer layer];
+        icon.name = @"icon";
+        icon.frame = bounds;
+        if (control.kind == Kind::Camera) {
+            // SF Symbols are vector images; draw one into a bitmap for the layer.
+            UIImageSymbolConfiguration *configuration = [UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightSemibold];
+            UIImage *symbol = [[UIImage systemImageNamed:@"camera.fill" withConfiguration:configuration]
+                imageWithTintColor:[UIColor colorWithWhite:0.85 alpha:1.0] renderingMode:UIImageRenderingModeAlwaysOriginal];
+            UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:symbol.size];
+            UIImage *bitmap = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+                [symbol drawAtPoint:CGPointZero];
+            }];
+            CALayer *imageLayer = [CALayer layer];
+            imageLayer.name = @"icon";
+            imageLayer.frame = CGRectInset(bounds, bounds.size.width * 0.22, bounds.size.height * 0.22);
+            imageLayer.contentsScale = UIScreen.mainScreen.scale;
+            imageLayer.contents = (__bridge id)bitmap.CGImage;
+            imageLayer.contentsGravity = kCAGravityResizeAspect;
+            [control.group insertSublayer:imageLayer below:control.ring];
+        }
+        else {
+            icon.path = [self imperialCrestInRect:CGRectInset(bounds, bounds.size.width * 0.18, bounds.size.height * 0.18)].CGPath;
+            icon.fillColor = UIColor.clearColor.CGColor;
+            icon.lineWidth = 1.6;
+            [control.group insertSublayer:icon below:control.ring];
+        }
     }
 
-    const CGFloat baseRadius = StickRange + 14;
-    _stickBase.path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(_stickOrigin.x - baseRadius, _stickOrigin.y - baseRadius, 2 * baseRadius, 2 * baseRadius)].CGPath;
-    _stickKnobLayer.path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(_stickKnob.x - 26, _stickKnob.y - 26, 52, 52)].CGPath;
     [CATransaction commit];
 }
 
-// The button under a point, allowing a little slack around each one.
-- (uint16_t)buttonsAt:(CGPoint)point {
-    uint16_t bits = 0;
-    for (const Button &button : _buttons) {
-        const CGFloat slack = (button.bit == N64Start || button.bit == N64L || button.bit == N64R) ? 1.6 : 1.25;
-        if (distance(point, button.center) <= button.radius * slack) {
-            bits |= button.bit;
+// The Galactic Empire's crest, simplified: an outer ring, an inner hub and
+// six spokes, drawn as strokes.
+- (UIBezierPath *)imperialCrestInRect:(CGRect)rect {
+    const CGPoint center = CGPointMake(CGRectGetMidX(rect), CGRectGetMidY(rect));
+    const CGFloat outer = std::min(rect.size.width, rect.size.height) / 2;
+    const CGFloat hub = outer * 0.36;
+    UIBezierPath *path = [UIBezierPath bezierPathWithArcCenter:center radius:outer startAngle:0 endAngle:2 * M_PI clockwise:YES];
+    [path moveToPoint:CGPointMake(center.x + hub, center.y)];
+    [path addArcWithCenter:center radius:hub startAngle:0 endAngle:2 * M_PI clockwise:YES];
+    for (int i = 0; i < 6; i++) {
+        const CGFloat angle = M_PI / 6 + i * M_PI / 3;
+        [path moveToPoint:CGPointMake(center.x + std::cos(angle) * hub, center.y + std::sin(angle) * hub)];
+        [path addLineToPoint:CGPointMake(center.x + std::cos(angle) * outer, center.y + std::sin(angle) * outer)];
+    }
+
+    return path;
+}
+
+#pragma mark - Looks
+
+- (bool)controlVisible:(const Control &)control {
+    switch (control.kind) {
+        case Kind::N64:
+            if ((control.bit & (N64DUp | N64DDown | N64DLeft | N64DRight)) != 0) {
+                return _showDpad;
+            }
+
+            return true;
+        case Kind::Menu: return true;
+        case Kind::Camera: return _showCamera;
+        case Kind::Cheat: return _showCheat;
+        case Kind::Level: return _showCheat && _cheatOn;
+        case Kind::Tray: return _trayOpen;
+    }
+
+    return false;
+}
+
+- (bool)trayItemOn:(TrayItem)item {
+    switch (item) {
+        case TrayItem::Gyro: return gyroMode.load() != int(GyroMode::Off);
+        case TrayItem::Camera: return _showCamera;
+        case TrayItem::Cheat: return _showCheat;
+        case TrayItem::Dpad: return _showDpad;
+        case TrayItem::Opacity: return !_opacityRow.hidden;
+        default: return false;
+    }
+}
+
+- (NSString *)trayLabel:(TrayItem)item {
+    static NSString *const gyroNames[] = { @"GYRO\nOFF", @"GYRO\nTOUCH", @"GYRO\nON" };
+    switch (item) {
+        case TrayItem::Gyro:
+            return (_motion.deviceMotionAvailable ? gyroNames[gyroMode.load()] : @"NO\nGYRO");
+        case TrayItem::Sens: return [NSString stringWithFormat:@"SENS\n%.1fx", GyroSens[gyroSensIndex.load()]];
+        case TrayItem::Opacity: return [NSString stringWithFormat:@"OPAC\n%d%%", int(std::lround(_opacity * 100))];
+        case TrayItem::Camera: return @"CAM";
+        case TrayItem::Cheat: return @"CHEAT";
+        case TrayItem::Dpad: return @"DPAD";
+        case TrayItem::Log: return @"LOG";
+        default: return @"";
+    }
+}
+
+- (void)refresh {
+    [CATransaction begin];
+    [CATransaction setDisableActions:YES];
+    for (Control &control : _controls) {
+        control.visible = [self controlVisible:control];
+        control.group.hidden = !control.visible;
+        if (!control.visible) {
+            control.ring.strokeEnd = 0.0;
+            continue;
+        }
+
+        const bool held = [self controlHeld:control];
+        UIColor *border = control.accent;
+        CGFloat fillWhite = held ? 0.30 : 0.0;
+        CGFloat fillAlpha = held ? 0.30 : 0.22;
+        if (control.kind == Kind::Tray) {
+            control.text.string = [self trayLabel:control.tray];
+            control.text.fontSize = 8;
+            control.text.frame = CGRectMake(0, control.radius - 10, 2 * control.radius, 22);
+            control.text.wrapped = YES;
+            const bool dim = (control.tray == TrayItem::Sens) && (gyroMode.load() == int(GyroMode::Off));
+            control.group.opacity = dim ? 0.45 : 1.0;
+            if ([self trayItemOn:control.tray]) {
+                border = Gold();
+            }
+        }
+        else {
+            const CGFloat alpha = (held ? 1.0 : IdleAlpha) * _opacity;
+            control.group.opacity = float(alpha);
+        }
+
+        if (control.kind == Kind::Cheat) {
+            for (CALayer *sublayer in control.group.sublayers) {
+                if ([sublayer.name isEqualToString:@"icon"] && [sublayer isKindOfClass:CAShapeLayer.class]) {
+                    ((CAShapeLayer *)sublayer).strokeColor = (_cheatOn ? CheatRed() : [UIColor colorWithWhite:0.85 alpha:1.0]).CGColor;
+                }
+            }
+
+            if (_cheatOn) {
+                border = CheatRed();
+            }
+
+            control.group.shadowColor = CheatRed().CGColor;
+            control.group.shadowRadius = 6;
+            control.group.shadowOffset = CGSizeZero;
+            control.group.shadowOpacity = _cheatOn ? 0.9f : 0.0f;
+        }
+
+        control.shape.fillColor = [UIColor colorWithWhite:fillWhite alpha:fillAlpha].CGColor;
+        control.shape.strokeColor = border.CGColor;
+        control.shape.lineWidth = ((control.kind == Kind::Cheat) && _cheatOn) ? 2.5 : 1.5;
+    }
+
+    _trayBacking.hidden = !_trayOpen;
+    const CGFloat stickAlpha = (_stickTouch != nil ? 1.0 : IdleAlpha) * _opacity;
+    _stickBase.opacity = float(stickAlpha);
+    _stickKnobLayer.opacity = float(stickAlpha);
+    _stickBase.path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(_stickOrigin.x - StickRadius, _stickOrigin.y - StickRadius, 2 * StickRadius, 2 * StickRadius)].CGPath;
+    _stickKnobLayer.path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(_stickKnob.x - StickKnob, _stickKnob.y - StickKnob, 2 * StickKnob, 2 * StickKnob)].CGPath;
+    [CATransaction commit];
+}
+
+- (bool)controlHeld:(const Control &)control {
+    const int index = int(&control - _controls.data());
+    for (const auto &entry : _touches) {
+        if ((entry.second.role == Role::Control) && (entry.second.control == index)) {
+            return true;
         }
     }
 
-    return bits;
+    return (control.kind == Kind::N64) && ((_pressed & control.bit) != 0);
 }
 
-- (void)update {
-    uint16_t bits = 0;
-    for (UITouch *touch in _touches) {
-        if (touch != _stickTouch) {
-            bits |= [self buttonsAt:[touch locationInView:self]];
+#pragma mark - Touches
+
+// The visible control nearest a point, within its size plus the slop.
+- (int)controlAt:(CGPoint)point {
+    int best = -1;
+    CGFloat bestDistance = CGFLOAT_MAX;
+    for (size_t i = 0; i < _controls.size(); i++) {
+        const Control &control = _controls[i];
+        if (!control.visible) {
+            continue;
         }
+
+        const CGRect bounds = CGRectInset([self boundsForControl:control], -TouchSlop, -TouchSlop);
+        const CGRect frame = CGRectOffset(bounds, control.center.x - CGRectGetMidX(bounds) + 0, control.center.y - CGRectGetMidY(bounds));
+        const CGFloat d = distance(point, control.center);
+        const bool inside = control.pill ? CGRectContainsPoint(frame, point) : (d <= control.radius + TouchSlop);
+        if (inside && (d < bestDistance)) {
+            best = int(i);
+            bestDistance = d;
+        }
+    }
+
+    return best;
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    const CFTimeInterval now = CACurrentMediaTime();
+    for (UITouch *touch in touches) {
+        const CGPoint p = [touch locationInView:self];
+        if (_levelCard != nil) {
+            continue;
+        }
+
+        TouchState state;
+        state.start = p;
+        state.last = p;
+        state.down = now;
+        const int index = [self controlAt:p];
+        if (index >= 0) {
+            state.role = Role::Control;
+            state.control = index;
+        }
+        else if (_trayOpen) {
+            // A touch anywhere else closes the tray.
+            [self closeTray];
+            continue;
+        }
+        else if ((_stickTouch == nil) && (p.x < self.bounds.size.width * StickAreaFraction) && (p.y > self.safeAreaInsets.top + 130)) {
+            state.role = Role::Stick;
+            _stickTouch = touch;
+            _stickOrigin = p;
+            _stickKnob = p;
+        }
+        else {
+            state.role = Role::Look;
+        }
+
+        _touches[(__bridge void *)touch] = state;
+    }
+
+    [self updateInput];
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    for (UITouch *touch in touches) {
+        auto it = _touches.find((__bridge void *)touch);
+        if (it == _touches.end()) {
+            continue;
+        }
+
+        TouchState &state = it->second;
+        const CGPoint p = [touch locationInView:self];
+        if (state.role == Role::Look) {
+            const CGFloat dx = p.x - state.last.x;
+            const CGFloat dy = p.y - state.last.y;
+            sote::platform::ios_add_look(int(std::lround(dx * LookCountsPerPoint)), int(std::lround(dy * LookCountsPerPoint)));
+        }
+        else if (state.role == Role::Control) {
+            const Control &control = _controls[state.control];
+            const CGFloat dx = p.x - state.start.x;
+            if (distance(p, state.start) > HoldMoveLimit) {
+                state.moved = true;
+            }
+
+            // CAMERA: a sideways slide starts a burst for as long as the
+            // finger stays down.
+            if ((control.kind == Kind::Camera) && !state.burst && !state.fired && (std::fabs(dx) >= BurstSlide)) {
+                state.burst = true;
+                state.moved = true;
+                state.nextBurst = 0;
+            }
+        }
+
+        state.last = p;
+    }
+
+    [self updateInput];
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    for (UITouch *touch in touches) {
+        auto it = _touches.find((__bridge void *)touch);
+        if (it == _touches.end()) {
+            continue;
+        }
+
+        const TouchState state = it->second;
+        _touches.erase(it);
+        if (touch == _stickTouch) {
+            _stickTouch = nil;
+        }
+
+        if ((state.role == Role::Control) && !state.fired && !state.moved && (event != nil)) {
+            [self tapControl:state.control];
+        }
+        else if ((state.role == Role::Control) && state.burst) {
+            [self finishBurst];
+        }
+    }
+
+    [self updateInput];
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [self touchesEnded:touches withEvent:nil];
+}
+
+#pragma mark - Actions
+
+- (void)tapControl:(int)index {
+    Control &control = _controls[index];
+    switch (control.kind) {
+        case Kind::Menu:
+            _startUntil = CACurrentMediaTime() + StartPulse;
+            break;
+        case Kind::Camera:
+            [self takePhotos:1];
+            break;
+        case Kind::Level:
+            [self openLevelCard];
+            break;
+        case Kind::Tray:
+            [self useTray:control.tray];
+            break;
+        default:
+            break;
+    }
+}
+
+// Holds that complete while the finger is still down.
+- (void)holdControl:(int)index {
+    Control &control = _controls[index];
+    UIImpactFeedbackGenerator *haptic = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+    switch (control.kind) {
+        case Kind::Menu:
+            [haptic impactOccurred];
+            _trayOpen ? [self closeTray] : [self openTray];
+            break;
+        case Kind::Cheat:
+            [haptic impactOccurred];
+            [self setCheat:!_cheatOn];
+            break;
+        case Kind::Tray:
+            if (control.tray == TrayItem::Opacity) {
+                [haptic impactOccurred];
+                _opacity = 1.0;
+                _opacitySlider.value = 1.0f;
+                [self saveSettings];
+                [self showToast:@"Opacity 100%"];
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+- (double)holdTimeFor:(const Control &)control {
+    switch (control.kind) {
+        case Kind::Menu: return MenuHold;
+        case Kind::Cheat: return CheatHold;
+        case Kind::Tray: return (control.tray == TrayItem::Opacity) ? MenuHold : 0.0;
+        default: return 0.0;
+    }
+}
+
+- (void)openTray {
+    _trayOpen = YES;
+    gyroSuppressed.store(true);
+    [self refresh];
+}
+
+- (void)closeTray {
+    _trayOpen = NO;
+    _opacityRow.hidden = YES;
+    gyroSuppressed.store(_levelCard != nil);
+    [self refresh];
+}
+
+- (void)useTray:(TrayItem)item {
+    switch (item) {
+        case TrayItem::Gyro:
+            if (_motion.deviceMotionAvailable) {
+                gyroMode.store((gyroMode.load() + 1) % 3);
+            }
+            break;
+        case TrayItem::Sens:
+            gyroSensIndex.store((gyroSensIndex.load() + 1) % 4);
+            break;
+        case TrayItem::Opacity:
+            _opacityRow.hidden = !_opacityRow.hidden;
+            break;
+        case TrayItem::Camera:
+            _showCamera = !_showCamera;
+            if (_showCamera) {
+                sote_photos_request_access();
+            }
+            break;
+        case TrayItem::Cheat:
+            _showCheat = !_showCheat;
+            [self setCheat:_showCheat];
+            break;
+        case TrayItem::Dpad:
+            _showDpad = !_showDpad;
+            break;
+        case TrayItem::Log:
+            [self closeTray];
+            if (self.toggleLog != nil) {
+                self.toggleLog();
+            }
+            break;
+        default:
+            break;
+    }
+
+    [self saveSettings];
+    [self refresh];
+}
+
+- (void)opacityChanged:(UISlider *)slider {
+    _opacity = std::round(slider.value * 20.0f) / 20.0f;
+    [self refresh];
+}
+
+- (void)opacityDone:(UISlider *)slider {
+    [self saveSettings];
+}
+
+- (void)setCheat:(bool)on {
+    const bool wasOn = _cheatOn;
+    _cheatOn = on;
+    sote_cheat_set(on);
+    [self saveSettings];
+    if (on && !wasOn) {
+        if (!sote_cheat_play_sound()) {
+            [self showToast:@"Cheats on (add clips to Files > SotE > Cheat Sounds)"];
+        }
+        else {
+            [self showToast:@"Cheats on"];
+        }
+    }
+    else if (!on && wasOn) {
+        [self showToast:@"Cheats off"];
+    }
+
+    [self refresh];
+}
+
+- (void)showToast:(NSString *)text {
+    _toast.text = text;
+    const CGFloat width = std::min(self.bounds.size.width - 40, [text sizeWithAttributes:@{ NSFontAttributeName: _toast.font }].width + 32);
+    _toast.frame = CGRectMake(CGRectGetMidX(self.bounds) - width / 2, _toast.frame.origin.y, width, 30);
+    _toast.hidden = NO;
+    _toastUntil = CACurrentMediaTime() + ToastTime;
+}
+
+#pragma mark - Camera
+
+- (void)takePhotos:(int)count {
+    for (int i = 0; i < count; i++) {
+        sote_photos_capture();
+    }
+
+    _photosPending += count;
+    [self cameraFeedback:(count == 1) burst:NO];
+}
+
+- (void)cameraFeedback:(bool)full burst:(bool)burst {
+    _flash.alpha = burst ? 0.35 : 0.85;
+    [UIView animateWithDuration:(burst ? 0.12 : 0.3) animations:^{
+        self->_flash.alpha = 0.0;
+    }];
+    AudioServicesPlaySystemSound(burst ? 1104 : 1108);
+    [[[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight] impactOccurred];
+}
+
+- (void)finishBurst {}
+
+- (void)photoSaved:(BOOL)toPhotos {
+    if (toPhotos) {
+        _photosToPhotos++;
+    }
+    else {
+        _photosToFiles++;
+    }
+
+    _photosPending = std::max(0, _photosPending - 1);
+    if (_photosPending == 0) {
+        if (_photosToFiles > 0) {
+            [self showToast:[NSString stringWithFormat:@"%d saved to Files (Screenshots)", _photosToFiles + _photosToPhotos]];
+        }
+        else {
+            [self showToast:(_photosToPhotos == 1) ? @"Photo saved" : [NSString stringWithFormat:@"%d photos saved", _photosToPhotos]];
+        }
+
+        _photosToPhotos = 0;
+        _photosToFiles = 0;
+    }
+}
+
+#pragma mark - Level selector
+
+- (void)openLevelCard {
+    [self closeTray];
+    gyroSuppressed.store(true);
+    UIView *dim = [[UIView alloc] initWithFrame:self.bounds];
+    dim.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.45];
+    UIView *card = [[UIView alloc] init];
+    card.backgroundColor = [UIColor colorWithWhite:0.06 alpha:0.92];
+    card.layer.cornerRadius = 16;
+    card.layer.borderWidth = 1.5;
+    card.layer.borderColor = [UIColor colorWithRed:1.0 green:0.85 blue:0.3 alpha:0.7].CGColor;
+    const CGFloat width = std::min(CGFloat(440), self.bounds.size.width - 40);
+    const CGFloat rowHeight = 30;
+    const NSUInteger count = sizeof(Levels) / sizeof(Levels[0]);
+    const CGFloat height = 48 + rowHeight * ((count + 1) / 2) + 12;
+    card.frame = CGRectMake((self.bounds.size.width - width) / 2, (self.bounds.size.height - height) / 2, width, height);
+    [dim addSubview:card];
+
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(16, 10, width - 60, 28)];
+    title.text = @"LEVEL";
+    title.textColor = Gold();
+    title.font = [UIFont fontWithName:@"AvenirNextCondensed-Bold" size:17] ?: [UIFont boldSystemFontOfSize:17];
+    [card addSubview:title];
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    close.frame = CGRectMake(width - 42, 8, 30, 30);
+    [close setTitle:@"✕" forState:UIControlStateNormal];
+    [close setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    [close addTarget:self action:@selector(closeLevelCard) forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:close];
+
+    for (NSUInteger i = 0; i < count; i++) {
+        UIButton *row = [UIButton buttonWithType:UIButtonTypeSystem];
+        const CGFloat columnWidth = (width - 24) / 2;
+        row.frame = CGRectMake(12 + (i % 2) * columnWidth, 44 + (i / 2) * rowHeight, columnWidth, rowHeight);
+        row.tag = NSInteger(i);
+        row.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+        NSMutableAttributedString *text = [[NSMutableAttributedString alloc] initWithString:[NSString stringWithFormat:@"%lu  ", (unsigned long)(i + 1)]
+            attributes:@{ NSForegroundColorAttributeName: Gold(), NSFontAttributeName: [UIFont boldSystemFontOfSize:14] }];
+        [text appendAttributedString:[[NSAttributedString alloc] initWithString:Levels[i].name
+            attributes:@{ NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: [UIFont systemFontOfSize:14] }]];
+        [row setAttributedTitle:text forState:UIControlStateNormal];
+        [row addTarget:self action:@selector(levelChosen:) forControlEvents:UIControlEventTouchUpInside];
+        [card addSubview:row];
+    }
+
+    _levelCard = dim;
+    [self addSubview:dim];
+}
+
+- (void)closeLevelCard {
+    [_levelCard removeFromSuperview];
+    _levelCard = nil;
+    gyroSuppressed.store(_trayOpen);
+}
+
+- (void)levelChosen:(UIButton *)row {
+    const Level &level = Levels[row.tag];
+    sote::platform::ios_request_level_jump(level.event);
+    [self closeLevelCard];
+    [self showToast:[NSString stringWithFormat:@"Loading %@", level.name]];
+}
+
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    // The level card and opacity slider are real controls; everything else is
+    // handled by this view's own touch tracking.
+    if (_levelCard != nil) {
+        return [_levelCard hitTest:[self convertPoint:point toView:_levelCard] withEvent:event] ?: _levelCard;
+    }
+
+    if (!_opacityRow.hidden && CGRectContainsPoint(_opacityRow.frame, point)) {
+        return [_opacityRow hitTest:[self convertPoint:point toView:_opacityRow] withEvent:event];
+    }
+
+    return [super hitTest:point withEvent:event] != nil ? self : nil;
+}
+
+#pragma mark - Every frame
+
+- (void)tick:(CADisplayLink *)link {
+    const CFTimeInterval now = CACurrentMediaTime();
+    bool changed = false;
+    for (auto &entry : _touches) {
+        TouchState &state = entry.second;
+        if (state.role != Role::Control) {
+            continue;
+        }
+
+        Control &control = _controls[state.control];
+        if ((control.kind == Kind::Camera) && state.burst) {
+            if ((state.burstShots < BurstMax) && (now >= state.nextBurst)) {
+                sote_photos_capture();
+                _photosPending++;
+                state.burstShots++;
+                state.nextBurst = now + BurstPeriod;
+                [self cameraFeedback:false burst:true];
+                [self showToast:[NSString stringWithFormat:@"%d", state.burstShots]];
+            }
+
+            continue;
+        }
+
+        const double hold = [self holdTimeFor:control];
+        if ((hold <= 0.0) || state.fired) {
+            continue;
+        }
+
+        if (state.moved) {
+            control.ring.strokeEnd = 0.0;
+            continue;
+        }
+
+        const double progress = (now - state.down) / hold;
+        [CATransaction begin];
+        [CATransaction setDisableActions:YES];
+        control.ring.strokeEnd = std::min(1.0, progress);
+        [CATransaction commit];
+        if (progress >= 1.0) {
+            state.fired = true;
+            control.ring.strokeEnd = 0.0;
+            [self holdControl:state.control];
+            changed = true;
+        }
+    }
+
+    for (Control &control : _controls) {
+        bool holding = false;
+        for (const auto &entry : _touches) {
+            holding = holding || ((entry.second.role == Role::Control) && (&_controls[entry.second.control] == &control) && !entry.second.fired && !entry.second.moved);
+        }
+
+        if (!holding && (control.ring.strokeEnd != 0.0)) {
+            [CATransaction begin];
+            [CATransaction setDisableActions:YES];
+            control.ring.strokeEnd = 0.0;
+            [CATransaction commit];
+        }
+    }
+
+    if (!_toast.hidden && (now > _toastUntil)) {
+        _toast.hidden = YES;
+    }
+
+    [self updateInput];
+    if (changed) {
+        [self refresh];
+    }
+}
+
+- (void)updateInput {
+    uint16_t bits = 0;
+    bool thumb = (_stickTouch != nil);
+    for (const auto &entry : _touches) {
+        const TouchState &state = entry.second;
+        if (state.role == Role::Look) {
+            thumb = true;
+        }
+        else if ((state.role == Role::Control) && (_controls[state.control].kind == Kind::N64)) {
+            // N64 buttons follow the finger, so a thumb can roll between them.
+            const int index = [self controlAt:state.last];
+            if ((index >= 0) && (_controls[index].kind == Kind::N64)) {
+                bits |= _controls[index].bit;
+            }
+
+            thumb = true;
+        }
+    }
+
+    if (CACurrentMediaTime() < _startUntil) {
+        bits |= N64Start;
     }
 
     float x = 0.0f;
     float y = 0.0f;
     if (_stickTouch != nil) {
-        const CGPoint p = [_stickTouch locationInView:self];
+        auto it = _touches.find((__bridge void *)_stickTouch);
+        const CGPoint p = (it != _touches.end()) ? it->second.last : _stickOrigin;
         CGFloat dx = p.x - _stickOrigin.x;
         CGFloat dy = p.y - _stickOrigin.y;
         const CGFloat length = std::hypot(dx, dy);
-        if (length > StickRange) {
-            dx *= StickRange / length;
-            dy *= StickRange / length;
+        if (length > StickRadius) {
+            dx *= StickRadius / length;
+            dy *= StickRadius / length;
         }
 
         _stickKnob = CGPointMake(_stickOrigin.x + dx, _stickOrigin.y + dy);
-        if (std::hypot(dx, dy) / StickRange > StickDeadZone) {
-            x = float(dx / StickRange);
-            y = float(-dy / StickRange);
+        if (std::hypot(dx, dy) / StickRadius > StickDeadZone) {
+            x = float(dx / StickRadius);
+            y = float(-dy / StickRadius);
         }
     }
     else {
@@ -242,50 +1137,106 @@ namespace {
         _stickKnob = _stickHome;
     }
 
+    gyroThumbDown.store(thumb);
+    const bool changed = (bits != _pressed);
     _pressed = bits;
     sote::platform::ios_set_touch_input(bits, x, y);
-    [self redraw];
+    if (changed || (_stickTouch != nil)) {
+        [self refresh];
+    }
 }
 
-- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    for (UITouch *touch in touches) {
-        const CGPoint p = [touch locationInView:self];
-        if (distance(p, _logCenter) < 24) {
-            if (self.toggleLog != nil) {
-                self.toggleLog();
+#pragma mark - Gyro
+
+- (void)startGyro {
+    _motion = [[CMMotionManager alloc] init];
+    if (!_motion.deviceMotionAvailable) {
+        return;
+    }
+
+    _motionQueue = [[NSOperationQueue alloc] init];
+    _motionQueue.maxConcurrentOperationCount = 1;
+    _motion.deviceMotionUpdateInterval = 0.01;
+    [self updateLandscapeSign];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(updateLandscapeSign)
+        name:UIDeviceOrientationDidChangeNotification object:nil];
+
+    __block CFTimeInterval lastTime = 0;
+    __block double carryX = 0.0;
+    __block double carryY = 0.0;
+    __block CFTimeInterval quietUntil = 0;
+    __block int lastSign = gyroLandscapeSign.load();
+    [_motion startDeviceMotionUpdatesUsingReferenceFrame:CMAttitudeReferenceFrameXArbitraryZVertical
+        toQueue:_motionQueue withHandler:^(CMDeviceMotion *motion, NSError *error) {
+        if (motion == nil) {
+            return;
+        }
+
+        const CFTimeInterval now = motion.timestamp;
+        const double dt = (lastTime > 0) ? (now - lastTime) : 0.0;
+        lastTime = now;
+        const int sign = gyroLandscapeSign.load();
+        if (sign != lastSign) {
+            // No aiming for a moment after the screen flips sides.
+            lastSign = sign;
+            quietUntil = now + 0.35;
+        }
+
+        const GyroMode mode = GyroMode(gyroMode.load());
+        if ((mode == GyroMode::Off) || gyroSuppressed.load() || (dt <= 0.0) || (dt > 0.5) || (now < quietUntil) ||
+            ((mode == GyroMode::Touch) && !gyroThumbDown.load())) {
+            carryX = carryY = 0.0;
+            return;
+        }
+
+        // Yaw about gravity's up axis (degrees per second), and pitch about
+        // the screen's horizontal axis, which is the device's y in landscape.
+        const CMRotationRate rate = motion.rotationRate;
+        const CMAcceleration g = motion.gravity;
+        const double gLength = std::sqrt(g.x * g.x + g.y * g.y + g.z * g.z);
+        if (gLength < 0.1) {
+            return;
+        }
+
+        double yaw = (rate.x * g.x + rate.y * g.y + rate.z * g.z) / gLength * (180.0 / M_PI);
+        double pitch = -rate.y * sign * (180.0 / M_PI);
+        auto deadZone = [](double value) {
+            const double magnitude = std::fabs(value);
+            if (magnitude < GyroDeadZone) {
+                return value * (magnitude / GyroDeadZone);
             }
 
-            continue;
-        }
+            return value;
+        };
 
-        if ((_stickTouch == nil) && CGRectContainsPoint(_stickArea, p) && ([self buttonsAt:p] == 0)) {
-            _stickTouch = touch;
-            _stickOrigin = p;
+        yaw = deadZone(yaw);
+        pitch = deadZone(pitch);
+        const double scale = GyroCountsPerDegree * GyroSens[gyroSensIndex.load()] * dt;
+        carryX += yaw * scale;
+        carryY += pitch * scale;
+        const int countsX = int(carryX);
+        const int countsY = int(carryY);
+        carryX -= countsX;
+        carryY -= countsY;
+        if ((countsX != 0) || (countsY != 0)) {
+            sote::platform::ios_add_look(countsX, countsY);
         }
+    }];
+}
 
-        [_touches addObject:touch];
+- (void)updateLandscapeSign {
+    const UIDeviceOrientation orientation = UIDevice.currentDevice.orientation;
+    if (orientation == UIDeviceOrientationLandscapeLeft) {
+        gyroLandscapeSign.store(1);
     }
-
-    [self update];
-}
-
-- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [self update];
-}
-
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    for (UITouch *touch in touches) {
-        [_touches removeObject:touch];
-        if (touch == _stickTouch) {
-            _stickTouch = nil;
-        }
+    else if (orientation == UIDeviceOrientationLandscapeRight) {
+        gyroLandscapeSign.store(-1);
     }
-
-    [self update];
 }
 
-- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
-    [self touchesEnded:touches withEvent:event];
+- (void)dealloc {
+    [_motion stopDeviceMotionUpdates];
+    [NSNotificationCenter.defaultCenter removeObserver:self];
 }
 
 @end

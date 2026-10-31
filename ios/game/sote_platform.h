@@ -27,4 +27,8 @@ namespace sote::platform {
     // On-screen controls: N64 button bits and a stick in [-1, 1] (up is +y).
     // Returns false when no control is held.
     bool touch_input(uint16_t *buttons, float *x, float *y);
+
+    // The event a level selector asked to jump to, once, or -1. Polled from
+    // the game thread every VI.
+    int take_level_jump();
 }

@@ -1,0 +1,115 @@
+diff --git a/src/hle/rt64_present_queue.cpp b/src/hle/rt64_present_queue.cpp
+index 30480bb..1e4b509 100644
+--- a/src/hle/rt64_present_queue.cpp
++++ b/src/hle/rt64_present_queue.cpp
+@@ -18,6 +18,11 @@
+ #include <string>
+ #include <vector>
+ 
++namespace RT64 {
++    std::atomic<int> iosCaptureRequests{0};
++    void (*iosCaptureCallback)(const uint8_t *bgra, uint32_t width, uint32_t height, uint32_t rowPitch) = nullptr;
++}
++
+ namespace RT64 {
+     namespace {
+         constexpr uint32_t SwapChainBytesPerPixel = 4;
+@@ -108,6 +113,53 @@ namespace RT64 {
+                 (state.presentIds[state.nextPresentId] == presentId);
+         }
+ 
++        // iOS camera: copies a presented frame for the app, which saves it
++        // as a photo. Requests come from the app's camera button.
++        struct IosCapture {
++            std::unique_ptr<RenderBuffer> readbackBuffer;
++            uint32_t width = 0;
++            uint32_t height = 0;
++            uint32_t rowPitch = 0;
++        };
++
++        IosCapture queueIosCapture(RenderDevice *device, RenderCommandList *commandList, RenderTexture *swapChainTexture,
++            uint32_t width, uint32_t height, bool supportsReadback)
++        {
++            IosCapture capture;
++            if ((iosCaptureCallback == nullptr) || !supportsReadback || (width == 0) || (height == 0)) {
++                return capture;
++            }
++
++            int requests = iosCaptureRequests.load();
++            while ((requests > 0) && !iosCaptureRequests.compare_exchange_weak(requests, requests - 1)) {}
++            if (requests <= 0) {
++                return capture;
++            }
++
++            capture.width = width;
++            capture.height = height;
++            capture.rowPitch = ((width * SwapChainBytesPerPixel + TextureDataPitchAlignment - 1) / TextureDataPitchAlignment) * TextureDataPitchAlignment;
++            capture.readbackBuffer = device->createBuffer(RenderBufferDesc::ReadbackBuffer(uint64_t(capture.rowPitch) * height));
++            commandList->barriers(RenderBarrierStage::COPY, RenderTextureBarrier(swapChainTexture, RenderTextureLayout::COPY_SOURCE));
++            commandList->copyTextureRegion(
++                RenderTextureCopyLocation::PlacedFootprint(capture.readbackBuffer.get(), RenderFormat::B8G8R8A8_UNORM, width, height, 1, capture.rowPitch / SwapChainBytesPerPixel),
++                RenderTextureCopyLocation::Subresource(swapChainTexture));
++            return capture;
++        }
++
++        void deliverIosCapture(const IosCapture &capture) {
++            if (capture.readbackBuffer == nullptr) {
++                return;
++            }
++
++            RenderRange readRange = { 0, uint64_t(capture.rowPitch) * capture.height };
++            const uint8_t *pixels = reinterpret_cast<const uint8_t *>(capture.readbackBuffer->map(0, &readRange));
++            if (pixels != nullptr) {
++                iosCaptureCallback(pixels, capture.width, capture.height, capture.rowPitch);
++                capture.readbackBuffer->unmap();
++            }
++        }
++
+         VisibleCapture queueVisibleCapture(
+             RenderDevice *device,
+             RenderCommandList *commandList,
+@@ -596,6 +648,8 @@ namespace RT64 {
+                         inspector->draw(commandList);
+                     }
+                     
++                    IosCapture iosCapture = queueIosCapture(ext.device, commandList, swapChainTexture,
++                        ext.swapChain->getWidth(), ext.swapChain->getHeight(), ext.swapChain->supportsReadback());
+                     VisibleCapture visibleCapture = queueVisibleCapture(
+                         ext.device,
+                         commandList,
+@@ -628,6 +682,7 @@ namespace RT64 {
+                     ext.presentGraphicsWorker->commandQueue->executeCommandLists(&commandList, 1, &waitSemaphore, 1, &signalSemaphore, 1, ext.presentGraphicsWorker->commandFence.get());
+                     ext.presentGraphicsWorker->wait();
+                     writeVisibleCapture(visibleCapture);
++                    deliverIosCapture(iosCapture);
+                 }
+             }
+ 
+diff --git a/src/hle/rt64_present_queue.h b/src/hle/rt64_present_queue.h
+index e08b02c..e58ef8d 100644
+--- a/src/hle/rt64_present_queue.h
++++ b/src/hle/rt64_present_queue.h
+@@ -4,6 +4,9 @@
+ 
+ #pragma once
+ 
++#include <atomic>
++#include <cstdint>
++
+ #include "common/rt64_profiling_timer.h"
+ #include "gui/rt64_inspector.h"
+ #include "render/rt64_vi_renderer.h"
+@@ -14,6 +17,13 @@
+ 
+ #define PRESENT_QUEUE_SIZE 4
+ 
++namespace RT64 {
++    // iOS camera: each request copies the next presented frame (BGRA) to the
++    // callback, on RT64's present thread.
++    extern std::atomic<int> iosCaptureRequests;
++    extern void (*iosCaptureCallback)(const uint8_t *bgra, uint32_t width, uint32_t height, uint32_t rowPitch);
++}
++
+ namespace RT64 {
+     struct WorkloadQueue;
+ 
