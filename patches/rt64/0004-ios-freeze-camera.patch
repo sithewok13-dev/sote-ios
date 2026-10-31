@@ -1,0 +1,172 @@
+diff --git a/src/hle/rt64_state.cpp b/src/hle/rt64_state.cpp
+index 7cae864..cdc9a8a 100644
+--- a/src/hle/rt64_state.cpp
++++ b/src/hle/rt64_state.cpp
+@@ -5,7 +5,10 @@
+ #include "rt64_state.h"
+ 
+ #include <cassert>
++#include <algorithm>
++#include <atomic>
+ #include <cinttypes>
++#include <cmath>
+ #include <cstdlib>
+ 
+ #include "im3d/im3d.h"
+@@ -29,6 +32,40 @@
+ #define MI_INTR_SP          0x00000001
+ 
+ namespace RT64 {
++    // iOS freeze camera, driven by the app (see rt64_state.h).
++    std::atomic<bool> iosFreezeRequested{false};
++    std::atomic<bool> iosFreezeActive{false};
++    std::atomic<bool> iosFreezeHasPivot{false};
++    std::atomic<float> iosFreezePivot[3] = {};
++    std::atomic<float> iosFreezeYaw{0.0f};
++    std::atomic<float> iosFreezePitch{0.0f};
++    std::atomic<float> iosFreezeZoom{1.0f};
++    std::atomic<float> iosFreezePanX{0.0f};
++    std::atomic<float> iosFreezePanY{0.0f};
++
++    namespace {
++        struct IosFreezeBase {
++            hlslpp::float3 pivot;
++            float radius = 1.0f;
++            float yaw = 0.0f;
++            float pitch = 0.0f;
++        };
++
++        IosFreezeBase iosFreezeBase;
++
++        void iosFreezeLookAt(DebuggerCamera &camera, hlslpp::float3 position, hlslpp::float3 focus) {
++            const hlslpp::float3 up = hlslpp::float3(0.0f, 1.0f, 0.0f);
++            const hlslpp::float3 forward = hlslpp::normalize(position - focus);
++            const hlslpp::float3 side = hlslpp::normalize(hlslpp::cross(up, forward));
++            const hlslpp::float3 viewUp = hlslpp::normalize(hlslpp::cross(forward, side));
++            camera.invViewMatrix[0] = hlslpp::float4(side, 0.0f);
++            camera.invViewMatrix[1] = hlslpp::float4(viewUp, 0.0f);
++            camera.invViewMatrix[2] = hlslpp::float4(forward, 0.0f);
++            camera.invViewMatrix[3] = hlslpp::float4(position, 1.0f);
++            camera.viewMatrix = hlslpp::inverse(camera.invViewMatrix);
++        }
++    }
++
+     const float ShiftScaleMap[] = {
+         1.0f,
+         1.0f / 2.0f,
+@@ -1846,7 +1883,76 @@ namespace RT64 {
+         clearExtended();
+     }
+     
++    // iOS freeze camera: takes the game's own camera from the last workload,
++    // pauses like the debugger does, and orbits around a pivot (Dash, as the
++    // app reports him) by the app's yaw, pitch, zoom and pan.
++    bool State::iosFreezeStart() {
++        const Workload &workload = ext.workloadQueue->workloads[ext.workloadQueue->previousWriteCursor()];
++        const Projection *best = nullptr;
++        for (uint32_t f = 0; f < workload.fbPairCount; f++) {
++            const FramebufferPair &fbPair = workload.fbPairs[f];
++            for (uint32_t p = 0; p < fbPair.projectionCount; p++) {
++                const Projection &proj = fbPair.projections[p];
++                if ((proj.type == Projection::Type::Perspective) && ((best == nullptr) || (proj.gameCallCount > best->gameCallCount))) {
++                    best = &proj;
++                }
++            }
++        }
++
++        if ((best == nullptr) || (best->transformsIndex >= workload.drawData.viewTransforms.size())) {
++            return false;
++        }
++
++        DebuggerCamera &camera = debuggerInspector.camera;
++        camera.enabled = true;
++        camera.sceneIndex = 0;
++        camera.viewMatrix = workload.drawData.viewTransforms[best->transformsIndex];
++        camera.invViewMatrix = hlslpp::inverse(camera.viewMatrix);
++        camera.projMatrix = workload.drawData.projTransforms[best->transformsIndex];
++        const hlslpp::float3 position = camera.invViewMatrix[3].xyz;
++        const hlslpp::float3 backward = hlslpp::normalize(camera.invViewMatrix[2].xyz);
++        hlslpp::float3 pivot = position - backward * 300.0f;
++        if (iosFreezeHasPivot.load()) {
++            pivot = hlslpp::float3(iosFreezePivot[0].load(), iosFreezePivot[1].load(), iosFreezePivot[2].load());
++        }
++
++        const hlslpp::float3 offset = position - pivot;
++        iosFreezeBase.pivot = pivot;
++        iosFreezeBase.radius = std::max(float(hlslpp::length(offset)), 1.0f);
++        iosFreezeBase.yaw = std::atan2(float(offset.x), float(offset.z));
++        iosFreezeBase.pitch = std::asin(std::clamp(float(offset.y) / iosFreezeBase.radius, -1.0f, 1.0f));
++        debuggerInspector.paused = true;
++        return true;
++    }
++
++    void State::iosFreezeUpdateCamera() {
++        DebuggerCamera &camera = debuggerInspector.camera;
++        const float yaw = iosFreezeBase.yaw + iosFreezeYaw.load();
++        const float pitch = std::clamp(iosFreezeBase.pitch + iosFreezePitch.load(), -1.4f, 1.4f);
++        const float radius = iosFreezeBase.radius * std::clamp(iosFreezeZoom.load(), 0.15f, 4.0f);
++        const hlslpp::float3 direction(std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw));
++        hlslpp::float3 focus = iosFreezeBase.pivot;
++        hlslpp::float3 position = focus + direction * radius;
++        iosFreezeLookAt(camera, position, focus);
++        const hlslpp::float3 pan = camera.invViewMatrix[0].xyz * (iosFreezePanX.load() * radius) +
++            camera.invViewMatrix[1].xyz * (iosFreezePanY.load() * radius);
++        iosFreezeLookAt(camera, position + pan, focus + pan);
++    }
++
+     void State::updateScreen(const VI &newVI, bool fromEarlyPresent) {
++        if (iosFreezeRequested.load() && !iosFreezeActive.load()) {
++            iosFreezeActive.store(iosFreezeStart());
++        }
++        else if (!iosFreezeRequested.load() && iosFreezeActive.load()) {
++            debuggerInspector.paused = false;
++            debuggerInspector.camera.enabled = false;
++            iosFreezeActive.store(false);
++        }
++
++        if (iosFreezeActive.load()) {
++            iosFreezeUpdateCamera();
++        }
++
+         // If the debugger has paused the plugin, keep submitting the last workload and screen VI for rendering and a present event.
+         if (debuggerInspector.paused && !fromEarlyPresent) {
+             if (ext.userConfig->developerMode) {
+diff --git a/src/hle/rt64_state.h b/src/hle/rt64_state.h
+index 7a8c13b..940d2eb 100644
+--- a/src/hle/rt64_state.h
++++ b/src/hle/rt64_state.h
+@@ -32,6 +32,25 @@
+ #include "rt64_rdp_tmem.h"
+ #include "rt64_workload_queue.h"
+ 
++#include <atomic>
++
++namespace RT64 {
++    // iOS freeze camera. The app sets iosFreezeRequested (and a pivot, the
++    // player's position in world units); RT64 then holds the last frame and
++    // renders it from an orbit around the pivot: yaw and pitch in radians on
++    // top of the game's own camera angle, zoom as a factor of its distance,
++    // pan as a fraction of it. iosFreezeActive reports when that is live.
++    extern std::atomic<bool> iosFreezeRequested;
++    extern std::atomic<bool> iosFreezeActive;
++    extern std::atomic<bool> iosFreezeHasPivot;
++    extern std::atomic<float> iosFreezePivot[3];
++    extern std::atomic<float> iosFreezeYaw;
++    extern std::atomic<float> iosFreezePitch;
++    extern std::atomic<float> iosFreezeZoom;
++    extern std::atomic<float> iosFreezePanX;
++    extern std::atomic<float> iosFreezePanY;
++}
++
+ namespace RT64 {
+     struct Application;
+     struct Interpreter;
+@@ -148,6 +167,8 @@ namespace RT64 {
+         void fullSyncFramebufferPairTiles(Workload &workload, FramebufferPair &fbPair, uint32_t &loadOpCursor, uint32_t &rdpTileCursor);
+         void listProcessBegin();
+         void listProcessEnd();
++        bool iosFreezeStart();
++        void iosFreezeUpdateCamera();
+         void updateScreen(const VI &newVI, bool fromEarlyPresent);
+         void updateMultisampling();
+         void inspect();

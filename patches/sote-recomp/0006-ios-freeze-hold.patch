@@ -1,0 +1,29 @@
+diff --git a/src/main.cpp b/src/main.cpp
+index 457ca53..d702189 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -3295,6 +3295,24 @@ void sote_cheats_frame(uint8_t* rdram) {
+         vi - outrider_object_vi.load(std::memory_order_relaxed) < 30);
+ #ifndef _WIN32
+     cheat_fall_rescue(rdram, event);
++    // iOS camera: report where Dash is, for the freeze camera to orbit, and
++    // hold the game while a freeze or selfie is on screen. RT64 keeps
++    // presenting the held frame from the VI thread.
++    const uint32_t player = read_guest_word(rdram, 0x80112B30U);
++    if (player >= 0x80000000U && player < 0x80800000U - 0x200U &&
++        sote::control_bindings::context_active(sote::control_bindings::Context::OnFoot)) {
++        sote::platform::note_player_position(
++            read_guest_float(rdram, player + 0x50U),
++            read_guest_float(rdram, player + 0x54U),
++            read_guest_float(rdram, player + 0x58U));
++    }
++    else {
++        sote::platform::note_player_position(NAN, NAN, NAN);
++    }
++
++    while (sote::platform::game_held()) {
++        std::this_thread::sleep_for(std::chrono::milliseconds(5));
++    }
+ #endif
+ }
+ 

@@ -20,6 +20,12 @@ namespace sote::platform {
 
     // True while the game is drawing a message box (Start dismisses it).
     bool ios_message_showing();
+
+    // Holds or releases the game (freeze camera, selfies).
+    void ios_set_game_held(bool held);
+
+    // Dash's latest world position on foot; false when not on foot.
+    bool ios_player_position(float *x, float *y, float *z);
 }
 
 // SotE-Recomp's main(), renamed by patches/sote-recomp for iOS. Blocks until

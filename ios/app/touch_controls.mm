@@ -18,6 +18,19 @@
 #include "ios_photos.h"
 #include "sote_platform_ios.h"
 
+// Defined by patches/rt64/0004-ios-freeze-camera.patch.
+namespace RT64 {
+    extern std::atomic<bool> iosFreezeRequested;
+    extern std::atomic<bool> iosFreezeActive;
+    extern std::atomic<bool> iosFreezeHasPivot;
+    extern std::atomic<float> iosFreezePivot[3];
+    extern std::atomic<float> iosFreezeYaw;
+    extern std::atomic<float> iosFreezePitch;
+    extern std::atomic<float> iosFreezeZoom;
+    extern std::atomic<float> iosFreezePanX;
+    extern std::atomic<float> iosFreezePanY;
+}
+
 namespace {
     // N64 controller button bits, as SotE-Recomp's frontend uses them.
     constexpr uint16_t N64A = 0x8000;
@@ -57,14 +70,27 @@ namespace {
     constexpr int BurstMax = 10;
     constexpr double ToastTime = 1.6;
 
+    // Freeze camera and selfies (house style: settle 0.35 s, show 0.9 s).
+    constexpr double CameraHold = 0.5;
+    constexpr CGFloat CameraSwipe = 36.0;
+    constexpr double FreezeSettle = 0.35;
+    constexpr double ShotSettle = 0.2;
+    constexpr double ShotGap = 0.45;
+    constexpr double ShotShow = 0.9;
+    constexpr double FreezeTimeout = 1.5;
+    constexpr float OrbitRadiansPerPoint = 0.3f * float(M_PI) / 180.0f;
+    constexpr float PivotHeight = 35.0f;
+    constexpr int SelfieCounts[] = { 1, 3, 5 };
+
     // Look: mouse counts per point dragged, and per degree the phone turns.
     constexpr CGFloat LookCountsPerPoint = 2.0;
     constexpr double GyroCountsPerDegree = 6.0;
     constexpr double GyroDeadZone = 1.5;
     constexpr double GyroSens[] = { 1.0, 1.5, 2.0, 3.0 };
 
-    enum class Kind { N64, Menu, Cheat, Camera, Level, Tray };
-    enum class TrayItem { None, Gyro, Sens, Opacity, Controls, Camera, Cheat, Level, Dpad, Log };
+    enum class Kind { N64, Menu, Cheat, Camera, Level, Tray, Exit };
+    enum class TrayItem { None, Gyro, Sens, Opacity, Controls, Camera, Selfies, Cheat, Level, Dpad, Log };
+    enum class Shot { None, Selfie, Cinematic, Action };
     enum class GyroMode { Off = 0, Touch = 1, Always = 2 };
     enum class Role { None, Stick, Look, Control };
 
@@ -179,6 +205,15 @@ namespace {
     bool _showCamera;
     bool _showDpad;
     bool _classicControls;
+    int _selfieIndex;
+    Shot _shot;
+    CFTimeInterval _shotStart;
+    CFTimeInterval _shotNext;
+    int _shotTaken;
+    int _shotCount;
+    bool _shotCaptureDue;
+    float _pinchDistance;
+    CGPoint _pinchMid;
     int _photosPending;
     int _photosToPhotos;
     int _photosToFiles;
@@ -226,7 +261,9 @@ namespace {
         { Kind::Tray, 0, TrayItem::Cheat, @"", white, TrayRadius, true },
         { Kind::Tray, 0, TrayItem::Level, @"", Gold(), TrayRadius, true },
         { Kind::Tray, 0, TrayItem::Dpad, @"", white, TrayRadius, true },
+        { Kind::Tray, 0, TrayItem::Selfies, @"", white, TrayRadius, true },
         { Kind::Tray, 0, TrayItem::Log, @"", white, TrayRadius, true },
+        { Kind::Exit, 0, TrayItem::None, @"✕", white, 22, false },
     };
 
     _trayBacking = [[UIView alloc] init];
@@ -305,6 +342,7 @@ namespace {
         @"iosTouchShowCamera": @YES,
         @"iosTouchShowDpad": @NO,
         @"iosTouchClassicControls": @NO,
+        @"iosTouchSelfieShots": @1,
     }];
     gyroMode.store(int([defaults integerForKey:@"iosTouchGyroMode"]) % 3);
     gyroSensIndex.store(int([defaults integerForKey:@"iosTouchGyroSens"]) % 4);
@@ -314,6 +352,7 @@ namespace {
     _showCamera = [defaults boolForKey:@"iosTouchShowCamera"];
     _showDpad = [defaults boolForKey:@"iosTouchShowDpad"];
     _classicControls = [defaults boolForKey:@"iosTouchClassicControls"];
+    _selfieIndex = int([defaults integerForKey:@"iosTouchSelfieShots"]) % 3;
 }
 
 - (void)saveSettings {
@@ -326,6 +365,7 @@ namespace {
     [defaults setBool:_showCamera forKey:@"iosTouchShowCamera"];
     [defaults setBool:_showDpad forKey:@"iosTouchShowDpad"];
     [defaults setBool:_classicControls forKey:@"iosTouchClassicControls"];
+    [defaults setInteger:_selfieIndex forKey:@"iosTouchSelfieShots"];
 }
 
 - (CATextLayer *)textLayer:(CGFloat)size {
@@ -421,6 +461,7 @@ namespace {
             case Kind::Cheat: control.center = CGPointMake(midX - 32, top + 30); break;
             case Kind::Camera: control.center = CGPointMake(midX + 32, top + 30); break;
             case Kind::Level: break;
+            case Kind::Exit: control.center = CGPointMake(left + 44, top + 30); break;
             case Kind::Tray:
                 if ([self trayItemAvailable:control.tray]) {
                     control.center = CGPointMake(midX + (trayIndex - (trayCount - 1) / 2.0) * TrayStep, trayY);
@@ -539,6 +580,12 @@ namespace {
 #pragma mark - Looks
 
 - (bool)controlVisible:(const Control &)control {
+    if (_shot != Shot::None) {
+        // Selfies and the cinematic burst show nothing; Action Freeze keeps
+        // only CAMERA (to shoot) and the exit button.
+        return (_shot == Shot::Action) && ((control.kind == Kind::Camera) || (control.kind == Kind::Exit));
+    }
+
     switch (control.kind) {
         case Kind::N64:
             if ((control.bit & (N64DUp | N64DDown | N64DLeft | N64DRight)) != 0) {
@@ -551,6 +598,7 @@ namespace {
         case Kind::Cheat: return _showCheat;
         case Kind::Level: return _showCheat && _cheatOn;
         case Kind::Tray: return _trayOpen && [self trayItemAvailable:control.tray];
+        case Kind::Exit: return false;
     }
 
     return false;
@@ -584,6 +632,7 @@ namespace {
         case TrayItem::Cheat: return _showCheat ? @"CHEAT\nON" : @"CHEAT\nOFF";
         case TrayItem::Level: return @"LEVEL\nSELECT";
         case TrayItem::Dpad: return _showDpad ? @"D-PAD\nON" : @"D-PAD\nOFF";
+        case TrayItem::Selfies: return [NSString stringWithFormat:@"SELFIES\n%d", SelfieCounts[_selfieIndex]];
         case TrayItem::Log: return @"LOG";
         default: return @"";
     }
@@ -713,7 +762,7 @@ namespace {
             [self closeTray];
             continue;
         }
-        else if ((_stickTouch == nil) && (p.x < self.bounds.size.width * StickAreaFraction) && (p.y > self.safeAreaInsets.top + 130)) {
+        else if ((_stickTouch == nil) && (_shot == Shot::None) && (p.x < self.bounds.size.width * StickAreaFraction) && (p.y > self.safeAreaInsets.top + 130)) {
             state.role = Role::Stick;
             _stickTouch = touch;
             _stickOrigin = p;
@@ -745,7 +794,10 @@ namespace {
                 state.moved = true;
             }
 
-            if ([self menuShowing]) {
+            if (_shot == Shot::Action) {
+                [self orbitWithTouch:touch delta:CGPointMake(dx, dy)];
+            }
+            else if ([self menuShowing]) {
                 // In the game's menus a swipe moves the selection, one row
                 // per MenuSwipeStep points.
                 state.swipeY += dy;
@@ -771,11 +823,23 @@ namespace {
             }
 
             // CAMERA: a sideways slide starts a burst for as long as the
-            // finger stays down.
-            if ((control.kind == Kind::Camera) && !state.burst && !state.fired && (std::fabs(dx) >= BurstSlide)) {
-                state.burst = true;
-                state.moved = true;
-                state.nextBurst = 0;
+            // finger stays down; up starts the cinematic burst, down Action
+            // Freeze.
+            const CGFloat dyStart = p.y - state.start.y;
+            if ((control.kind == Kind::Camera) && (_shot == Shot::None) && !state.burst && !state.fired) {
+                if ((std::fabs(dx) >= BurstSlide) && (std::fabs(dx) > std::fabs(dyStart))) {
+                    state.burst = true;
+                    state.moved = true;
+                    state.nextBurst = 0;
+                }
+                else if (dyStart <= -CameraSwipe) {
+                    state.fired = true;
+                    [self startShot:Shot::Cinematic];
+                }
+                else if (dyStart >= CameraSwipe) {
+                    state.fired = true;
+                    [self startShot:Shot::Action];
+                }
             }
         }
 
@@ -848,6 +912,9 @@ namespace {
         case Kind::Camera:
             [self takePhotos:1];
             break;
+        case Kind::Exit:
+            [self endShot];
+            break;
         case Kind::Tray:
             [self useTray:control.tray];
             break;
@@ -869,6 +936,12 @@ namespace {
             [haptic impactOccurred];
             [self setCheat:!_cheatOn];
             break;
+        case Kind::Camera:
+            if (_shot == Shot::None) {
+                [haptic impactOccurred];
+                [self startShot:Shot::Selfie];
+            }
+            break;
         case Kind::Tray:
             if (control.tray == TrayItem::Opacity) {
                 [haptic impactOccurred];
@@ -887,6 +960,7 @@ namespace {
     switch (control.kind) {
         case Kind::Menu: return MenuHold;
         case Kind::Cheat: return CheatHold;
+        case Kind::Camera: return (_shot == Shot::None) ? CameraHold : 0.0;
         case Kind::Tray: return (control.tray == TrayItem::Opacity) ? MenuHold : 0.0;
         default: return 0.0;
     }
@@ -938,6 +1012,9 @@ namespace {
             break;
         case TrayItem::Level:
             [self openLevelCard];
+            break;
+        case TrayItem::Selfies:
+            _selfieIndex = (_selfieIndex + 1) % 3;
             break;
         case TrayItem::Log:
             [self closeTray];
@@ -1039,6 +1116,141 @@ namespace {
     }
 }
 
+#pragma mark - Freeze camera and selfies
+
+// Holds the game and asks RT64 to keep showing its last frame from an orbit
+// around Dash. Selfie: the camera swings round in front of him for 1, 3 or 5
+// shots. Cinematic: 5 shots sweeping round the frozen moment. Action Freeze:
+// drag to orbit, pinch to zoom, two fingers to pan, CAMERA to shoot, ✕ to
+// leave.
+- (void)startShot:(Shot)shot {
+    [self closeTray];
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    const bool havePivot = sote::platform::ios_player_position(&x, &y, &z);
+    RT64::iosFreezePivot[0].store(x);
+    RT64::iosFreezePivot[1].store(y + PivotHeight);
+    RT64::iosFreezePivot[2].store(z);
+    RT64::iosFreezeHasPivot.store(havePivot);
+    [self setOrbitYaw:0.0f pitch:0.0f zoom:1.0f];
+    RT64::iosFreezePanX.store(0.0f);
+    RT64::iosFreezePanY.store(0.0f);
+    sote::platform::ios_set_game_held(true);
+    RT64::iosFreezeRequested.store(true);
+    gyroSuppressed.store(true);
+    _shot = shot;
+    _shotStart = CACurrentMediaTime();
+    _shotNext = _shotStart + FreezeSettle;
+    _shotTaken = 0;
+    _shotCaptureDue = false;
+    _shotCount = (shot == Shot::Selfie) ? SelfieCounts[_selfieIndex] : ((shot == Shot::Cinematic) ? 5 : 0);
+    _pinchDistance = 0.0f;
+    [self refresh];
+}
+
+- (void)endShot {
+    RT64::iosFreezeRequested.store(false);
+    sote::platform::ios_set_game_held(false);
+    gyroSuppressed.store(_trayOpen || (_levelCard != nil));
+    _shot = Shot::None;
+    [self refresh];
+}
+
+- (void)setOrbitYaw:(float)yaw pitch:(float)pitch zoom:(float)zoom {
+    RT64::iosFreezeYaw.store(yaw);
+    RT64::iosFreezePitch.store(pitch);
+    RT64::iosFreezeZoom.store(zoom);
+}
+
+static float randomBetween(float low, float high) {
+    return low + (high - low) * float(arc4random_uniform(10001)) / 10000.0f;
+}
+
+- (void)tickShot:(CFTimeInterval)now {
+    if (_shot == Shot::None) {
+        return;
+    }
+
+    if (!RT64::iosFreezeActive.load()) {
+        if (now - _shotStart > FreezeTimeout) {
+            // No 3D view to orbit here (a menu or a story screen).
+            [self endShot];
+            [self showToast:@"No camera here"];
+        }
+
+        return;
+    }
+
+    if ((_shot == Shot::Action) || (now < _shotNext)) {
+        return;
+    }
+
+    if (_shotCaptureDue) {
+        // The camera has had a moment to settle: take the shot.
+        _shotCaptureDue = false;
+        [self takePhotos:1];
+        _shotTaken++;
+        _shotNext = now + ((_shotTaken < _shotCount) ? ShotGap : ShotShow);
+        return;
+    }
+
+    if (_shotTaken >= _shotCount) {
+        [self endShot];
+        return;
+    }
+
+    if (_shot == Shot::Selfie) {
+        // In front of Dash, a little above, at arm's length, a fresh angle
+        // for each shot.
+        [self setOrbitYaw:float(M_PI) + randomBetween(-0.35f, 0.35f) pitch:randomBetween(0.05f, 0.3f) zoom:randomBetween(0.35f, 0.55f)];
+    }
+    else {
+        // Sweep round the frozen moment.
+        const float t = (_shotCount > 1) ? float(_shotTaken) / float(_shotCount - 1) : 0.5f;
+        [self setOrbitYaw:-1.0f + 2.0f * t pitch:0.15f zoom:0.85f];
+    }
+
+    _shotCaptureDue = true;
+    _shotNext = now + ShotSettle;
+}
+
+// Action Freeze: one finger orbits, two pinch to zoom and pan.
+- (void)orbitWithTouch:(UITouch *)touch delta:(CGPoint)delta {
+    std::vector<CGPoint> points;
+    for (const auto &entry : _touches) {
+        if (entry.second.role == Role::Look) {
+            points.push_back(entry.second.last);
+        }
+    }
+
+    if (points.size() >= 2) {
+        const CGPoint a = (touch == nil) ? points[0] : [touch locationInView:self];
+        CGPoint b = points[0];
+        for (const CGPoint &point : points) {
+            if (distance(point, a) > distance(b, a)) {
+                b = point;
+            }
+        }
+
+        const float spread = float(distance(a, b));
+        const CGPoint mid = CGPointMake((a.x + b.x) / 2, (a.y + b.y) / 2);
+        if ((_pinchDistance > 0.0f) && (spread > 1.0f)) {
+            RT64::iosFreezeZoom.store(std::clamp(RT64::iosFreezeZoom.load() * (_pinchDistance / spread), 0.15f, 4.0f));
+            RT64::iosFreezePanX.store(RT64::iosFreezePanX.load() - float((mid.x - _pinchMid.x) / self.bounds.size.width));
+            RT64::iosFreezePanY.store(RT64::iosFreezePanY.load() + float((mid.y - _pinchMid.y) / self.bounds.size.height));
+        }
+
+        _pinchDistance = spread;
+        _pinchMid = mid;
+        return;
+    }
+
+    _pinchDistance = 0.0f;
+    RT64::iosFreezeYaw.store(RT64::iosFreezeYaw.load() - float(delta.x) * OrbitRadiansPerPoint);
+    RT64::iosFreezePitch.store(std::clamp(RT64::iosFreezePitch.load() + float(delta.y) * OrbitRadiansPerPoint, -1.4f, 1.4f));
+}
+
 #pragma mark - Level selector
 
 - (void)openLevelCard {
@@ -1121,6 +1333,7 @@ namespace {
 - (void)tick:(CADisplayLink *)link {
     const CFTimeInterval now = CACurrentMediaTime();
     bool changed = false;
+    [self tickShot:now];
     for (auto &entry : _touches) {
         TouchState &state = entry.second;
         if (state.role != Role::Control) {
@@ -1252,6 +1465,12 @@ namespace {
     gyroThumbDown.store(thumb);
     const bool changed = (bits != _pressed);
     _pressed = bits;
+    if (_shot != Shot::None) {
+        bits = 0;
+        x = 0.0f;
+        y = 0.0f;
+    }
+
     sote::platform::ios_set_touch_input(bits, x, y);
     if (changed || (_stickTouch != nil)) {
         [self refresh];

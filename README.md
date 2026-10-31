@@ -55,6 +55,8 @@ upstream commits SotE-Recomp uses.
   `0002` logs RT64's present path (swap chain resize, empty swap chain,
   failed acquire or present) while the game shows a black screen.
   `0003` copies presented frames for the camera button.
+  `0004` is the freeze camera: on request it pauses on the last frame (as
+  RT64's debugger does) and renders it from an orbit around Dash.
 - `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
   configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
   `CAMetalLayer.displaySyncEnabled`) that abort on iOS. `0002` lets Metal
@@ -83,6 +85,7 @@ upstream commits SotE-Recomp uses.
   `0004` lets the level selector jump to a level's first event.
   `0005` adds the cheat's fall rescue and tells the app when a message box
   is drawn.
+  `0006` reports Dash's position and holds the game while the app freezes it.
 - `ios/game/`: the `sote_game` library: SotE-Recomp's game code plus
   `sote_platform_ios.mm` (Documents folder, Metal view, keyboard stub) and
   `sote_win32_compat.h` (the few Win32 names it uses elsewhere: key codes,
@@ -145,9 +148,13 @@ not cover ROM-derived code or the game's names, art and media.
      hold 0.45 s (its border fills) for the tray: CONTROLS, GYRO (off /
      while touching / always), SENS, OPACITY (slider; hold to reset),
      CAMERA, CHEAT, LEVEL SELECT (cheat on), D-PAD, LOG;
-   - CAMERA (top middle, beside CHEAT): tap for a photo, slide sideways for a burst (every
-     0.2 s, up to 10). Photos go to your library, or to Files > SotE >
-     Screenshots without access;
+   - CAMERA (top middle, beside CHEAT): tap for a photo; slide sideways for a
+     burst (every 0.2 s, up to 10); hold 0.5 s for selfies (the game freezes
+     and the camera swings round in front of Dash, 1, 3 or 5 shots, SELFIES
+     in the tray); slide up for a cinematic burst (5 shots sweeping round the
+     frozen moment); slide down for Action Freeze (drag to orbit, pinch to
+     zoom, two fingers to pan, CAMERA to shoot, ✕ to leave). Photos go to
+     your library, or to Files > SotE > Screenshots without access;
    - CHEAT (shown from the tray): hold 0.5 s to switch infinite health,
      lives, ammo, missiles and vehicle health, and saves Dash from
      bottomless falls (he is put back on the last ledge he stood on). Its

@@ -34,4 +34,12 @@ namespace sote::platform {
 
     // Called from the game thread each time a message box's text is drawn.
     void note_message_drawn();
+
+    // Called from the game thread every frame with Dash's world position on
+    // foot (NaN otherwise), for the freeze camera.
+    void note_player_position(float x, float y, float z);
+
+    // True while the app holds the game still (freeze camera, selfies); the
+    // game thread waits while it is.
+    bool game_held();
 }

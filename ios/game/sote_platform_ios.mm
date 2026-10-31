@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cmath>
 
 #include "frontend.hpp"
 
@@ -46,6 +47,32 @@ namespace sote::platform {
 
     bool ios_message_showing() {
         return steady_ms() - message_drawn_ms.load() < 250;
+    }
+
+    static std::atomic<bool> held{false};
+    static std::atomic<float> player_x{NAN};
+    static std::atomic<float> player_y{NAN};
+    static std::atomic<float> player_z{NAN};
+
+    void note_player_position(float x, float y, float z) {
+        player_x.store(x);
+        player_y.store(y);
+        player_z.store(z);
+    }
+
+    bool game_held() {
+        return held.load();
+    }
+
+    void ios_set_game_held(bool hold) {
+        held.store(hold);
+    }
+
+    bool ios_player_position(float *x, float *y, float *z) {
+        *x = player_x.load();
+        *y = player_y.load();
+        *z = player_z.load();
+        return std::isfinite(*x) && std::isfinite(*y) && std::isfinite(*z);
     }
 
     void ios_add_look(int x, int y) {
