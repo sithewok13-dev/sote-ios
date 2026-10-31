@@ -54,16 +54,6 @@ upstream commits SotE-Recomp uses.
   RT64's texture decoder included, wrote nothing: the black screen).
   `0002` logs RT64's present path (swap chain resize, empty swap chain,
   failed acquire or present) while the game shows a black screen.
-  `0003` adds to that: at the captured frames it reads back the image the
-  VI pass draws from and clears the screen to magenta first, to show which
-  stage is black.
-  `0004` tints every draw magenta through RT64's per-draw buffer
-  (`SOTE_DEBUG_HIGHLIGHT`), to check the shaders read it on iOS.
-  `0005` logs two workloads in detail: their framebuffers, projections
-  and first draw calls, and the vertex positions before and after the RSP
-  compute pass, read back from the GPU.
-  `0006` reads back the first texture uploads (TMEM bytes and decoded
-  texture) to compare them with what the CPU uploaded.
 - `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
   configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
   `CAMetalLayer.displaySyncEnabled`) that abort on iOS. `0002` lets Metal
@@ -75,6 +65,8 @@ upstream commits SotE-Recomp uses.
   `0004` checks texture buffer views (which RT64's compute shaders read
   vertex data through): Metal returns nil past a width limit that is lower
   on iOS, so it logs that and retries with the view clamped.
+  `0005` also logs the details of a failed command buffer (with shader
+  validation on, the failing function and resource).
 - `patches/sote-recomp/`: `0001` ports SotE-Recomp's Windows-only code: its
   window, message pump, crash reports and executable path go behind
   `#ifdef _WIN32` with iOS versions; `main()` becomes `sote_main()`;

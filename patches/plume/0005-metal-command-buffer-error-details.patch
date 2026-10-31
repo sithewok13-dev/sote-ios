@@ -1,0 +1,17 @@
+diff --git a/plume_metal.cpp b/plume_metal.cpp
+index 38114ea..164c1a5 100644
+--- a/plume_metal.cpp
++++ b/plume_metal.cpp
+@@ -2343,6 +2343,12 @@ namespace plume {
+                 fprintf(stderr, "[plume] command buffer failed: %s (code %ld)\n",
+                     error != nullptr ? error->localizedDescription()->utf8String() : "unknown error",
+                     error != nullptr ? (long)error->code() : 0L);
++
++                // With shader validation on, the error's user info names the
++                // failing encoder, function and resource.
++                if ((error != nullptr) && (error->userInfo() != nullptr) && (failureReports <= 3)) {
++                    fprintf(stderr, "[plume]   details: %s\n", error->userInfo()->description()->utf8String());
++                }
+             }
+         });
+ 
