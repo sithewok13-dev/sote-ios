@@ -59,6 +59,8 @@ upstream commits SotE-Recomp uses.
   `0005` logs two workloads in detail: their framebuffers, projections
   and first draw calls, and the vertex positions before and after the RSP
   compute pass, read back from the GPU.
+  `0006` reads back the first texture uploads (TMEM bytes and decoded
+  texture) to compare them with what the CPU uploaded.
 - `patches/plume/`: small fixes applied to plume by `CMakeLists.txt` at
   configure time. `0001` skips Mac-only Metal calls (`MTLDevice.location`,
   `CAMetalLayer.displaySyncEnabled`) that abort on iOS. `0002` lets Metal
