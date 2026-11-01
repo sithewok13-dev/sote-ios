@@ -1,8 +1,8 @@
 diff --git a/src/hle/rt64_state.cpp b/src/hle/rt64_state.cpp
-index 7cae864..2e4fcf2 100644
+index 7cae864..21447f7 100644
 --- a/src/hle/rt64_state.cpp
 +++ b/src/hle/rt64_state.cpp
-@@ -5,7 +5,10 @@
+@@ -5,7 +5,11 @@
  #include "rt64_state.h"
  
  #include <cassert>
@@ -10,10 +10,11 @@ index 7cae864..2e4fcf2 100644
 +#include <atomic>
  #include <cinttypes>
 +#include <cmath>
++#include <cstdio>
  #include <cstdlib>
  
  #include "im3d/im3d.h"
-@@ -29,6 +32,68 @@
+@@ -29,6 +33,68 @@
  #define MI_INTR_SP          0x00000001
  
  namespace RT64 {
@@ -82,7 +83,7 @@ index 7cae864..2e4fcf2 100644
      const float ShiftScaleMap[] = {
          1.0f,
          1.0f / 2.0f,
-@@ -1846,7 +1911,152 @@ namespace RT64 {
+@@ -1846,7 +1912,179 @@ namespace RT64 {
          clearExtended();
      }
      
@@ -107,6 +108,25 @@ index 7cae864..2e4fcf2 100644
 +
 +        if ((best == nullptr) || (best->transformsIndex >= workload.drawData.viewTransforms.size())) {
 +            return false;
++        }
++
++        // What the frame is made of, for the log: every perspective
++        // projection's draw count and camera (position and facing).
++        for (uint32_t f = 0; f < workload.fbPairCount; f++) {
++            const FramebufferPair &fbPair = workload.fbPairs[f];
++            for (uint32_t p = 0; p < fbPair.projectionCount; p++) {
++                const Projection &proj = fbPair.projections[p];
++                if ((proj.type != Projection::Type::Perspective) || (proj.transformsIndex >= workload.drawData.viewTransforms.size())) {
++                    continue;
++                }
++
++                const hlslpp::float4x4 inv = hlslpp::inverse(hlslpp::float4x4(workload.drawData.viewTransforms[proj.transformsIndex]));
++                std::printf("[ios][freeze] fb %u proj %u calls %u%s pos %.1f %.1f %.1f back %.2f %.2f %.2f up %.2f %.2f %.2f\n",
++                    f, p, proj.gameCallCount, (&proj == best) ? " (main)" : "",
++                    float(inv[3].x), float(inv[3].y), float(inv[3].z),
++                    float(inv[2].x), float(inv[2].y), float(inv[2].z),
++                    float(inv[1].x), float(inv[1].y), float(inv[1].z));
++            }
 +        }
 +
 +        DebuggerCamera &camera = debuggerInspector.camera;
@@ -197,6 +217,14 @@ index 7cae864..2e4fcf2 100644
 +            iosFreezeBase.radius = std::max(iosFreezeBase.radius, minRadius);
 +            iosFreezeBase.pitch = std::clamp(iosFreezeBase.pitch, 0.12f, 0.45f);
 +        }
++        std::printf("[ios][freeze] pivot %.1f %.1f %.1f radius %.1f yaw %.2f pitch %.2f scale %.3f eye %d player %d size %.1f workloads %u\n",
++            float(pivot.x), float(pivot.y), float(pivot.z), iosFreezeBase.radius, iosFreezeBase.yaw, iosFreezeBase.pitch, scale,
++            int(iosFreezeHasEye.load()), int(iosFreezeHasPivot.load()), iosFreezeSize.load(), uint32_t(ext.workloadQueue->workloads.size()));
++        std::printf("[ios][freeze] game eye %.1f %.1f %.1f forward %.2f %.2f %.2f player %.1f %.1f %.1f\n",
++            iosFreezeEye[0].load(), iosFreezeEye[1].load(), iosFreezeEye[2].load(),
++            iosFreezeForward[0].load(), iosFreezeForward[1].load(), iosFreezeForward[2].load(),
++            iosFreezePivot[0].load(), iosFreezePivot[1].load(), iosFreezePivot[2].load());
++        std::fflush(stdout);
 +        debuggerInspector.paused = true;
 +        return true;
 +    }

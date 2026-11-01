@@ -15,6 +15,7 @@
 #include "controls_menu.hpp"
 #include "ios_cheat.h"
 #include "menu_skin.hpp"
+#include "sote_log.h"
 #include "ios_photos.h"
 #include "sote_platform_ios.h"
 
@@ -147,6 +148,7 @@ namespace {
         int burstShots = 0;
         CFTimeInterval nextBurst = 0;
         CGFloat swipeY = 0;
+        CGFloat swipeX = 0;
     };
 
     CGFloat distance(CGPoint a, CGPoint b) {
@@ -204,6 +206,8 @@ namespace {
     // Short presses queued by menu taps and swipes: bit, start, end.
     std::vector<std::tuple<uint16_t, CFTimeInterval, CFTimeInterval>> _pulses;
     CFTimeInterval _pulseCursor;
+    // One of the game's menus was up at the last tick.
+    bool _menuWasShowing;
     // The stick was drawn under a thumb at the last refresh.
     bool _stickShown;
     // Look drag fractions not yet sent.
@@ -629,7 +633,9 @@ static NSString *appVersionText(void) {
     switch (control.kind) {
         case Kind::N64:
             if ((control.bit & (N64DUp | N64DDown | N64DLeft | N64DRight)) != 0) {
-                return _showDpad;
+                // The game's own menus (naming a player, its difficulty) are
+                // made for the D-pad: show it while one is up.
+                return _showDpad || _menuWasShowing;
             }
 
             return true;
@@ -850,6 +856,18 @@ static NSString *appVersionText(void) {
                     [self pulse:N64DDown];
                     state.swipeY -= MenuSwipeStep;
                 }
+
+                // Sideways, left and right (letters, difficulty, settings).
+                state.swipeX += dx;
+                while (state.swipeX <= -MenuSwipeStep) {
+                    [self pulse:N64DLeft];
+                    state.swipeX += MenuSwipeStep;
+                }
+
+                while (state.swipeX >= MenuSwipeStep) {
+                    [self pulse:N64DRight];
+                    state.swipeX -= MenuSwipeStep;
+                }
             }
             else {
                 // Keep the fractions, so slow drags still turn.
@@ -930,6 +948,9 @@ static NSString *appVersionText(void) {
             }
             else if ([self tapOnMessage:state.last]) {
                 // A tap clears a message box, like Start.
+                int top = 0;
+                sote::platform::ios_message_showing(&top);
+                sote::log("touch: tap at %.0f,%.0f cleared a message (top %d)", state.last.x, state.last.y, top);
                 [self pulse:N64Start];
             }
         }
@@ -964,6 +985,12 @@ static NSString *appVersionText(void) {
     const CGFloat height = self.bounds.size.height;
     const CGFloat y = p.y / height * 240.0;
     const bool inPicture = std::fabs(p.x - self.bounds.size.width / 2.0) < height * 2.0 / 3.0;
+    // Never on the HUD along the bottom (health, weapon, radar): that's where
+    // a thumb rests.
+    if (p.y > height * 0.72) {
+        return false;
+    }
+
     return inPicture && (y >= top - 16) && (y <= top + 64);
 }
 
@@ -1624,6 +1651,11 @@ static float randomBetween(float low, float high) {
     const CFTimeInterval now = CACurrentMediaTime();
     bool changed = false;
     [self tickShot:now];
+    const bool menu = [self menuShowing];
+    if (menu != _menuWasShowing) {
+        _menuWasShowing = menu;
+        [self refresh];
+    }
     [self tickMenuTap:now];
     for (auto &entry : _touches) {
         TouchState &state = entry.second;
@@ -1823,7 +1855,8 @@ static float randomBetween(float low, float high) {
         }
 
         double yaw = (rate.x * g.x + rate.y * g.y + rate.z * g.z) / gLength * (180.0 / M_PI);
-        double pitch = -rate.y * sign * (180.0 / M_PI);
+        // Tilting the top of the phone away looks down, as with a camera.
+        double pitch = rate.y * sign * (180.0 / M_PI);
         auto deadZone = [](double value) {
             const double magnitude = std::fabs(value);
             if (magnitude < GyroDeadZone) {

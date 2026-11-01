@@ -166,7 +166,8 @@ not cover ROM-derived code or the game's names, art and media.
      Cheat Sounds;
    In the game's menus, tap a row of the pause or options menu, or a player or Options /
    Rename / Clear on the player screen, to pick it
-   (elsewhere a tap is A), and swipe up or down to move between rows. A tap on a message box clears it (Start). A game controller works too.
+   (elsewhere a tap is A), and swipe up, down, left or right for the D-pad;
+   the D-pad itself shows while a menu is up. A tap on a message box clears it (Start). A game controller works too.
 
 If anything goes wrong, `sote-log.txt` and the `logs` folder in the same
 place say what happened.
