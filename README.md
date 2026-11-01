@@ -150,7 +150,8 @@ not cover ROM-derived code or the game's names, art and media.
      hold 0.45 s (its border fills) for the tray: CONTROLS, GYRO (off /
      while touching / always), SENS (look speed for drags and the gyro,
      1x to 4x), OPACITY (slider; hold to reset), CAMERA, CHEAT, LEVEL
-     SELECT (cheat on), D-PAD, SELFIES;
+     SELECT (cheat on), D-PAD, SELFIES, with the app's version
+     just above it;
    - CAMERA (top middle, beside CHEAT): tap for a photo; slide sideways for a
      burst (every 0.2 s, up to 10); hold 0.5 s for selfies (the game freezes
      and the camera swings round in front of Dash, 1, 3 or 5 shots, SELFIES

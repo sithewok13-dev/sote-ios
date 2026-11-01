@@ -191,6 +191,7 @@ namespace {
     // Tray, opacity row, toast, level card.
     bool _trayOpen;
     UIView *_trayBacking;
+    UILabel *_versionLabel;
     UIView *_opacityRow;
     UISlider *_opacitySlider;
     UILabel *_toast;
@@ -232,6 +233,18 @@ namespace {
     int _photosPending;
     int _photosToPhotos;
     int _photosToFiles;
+}
+
+// "v0.9.3", with the build number after it when it differs, from Info.plist.
+static NSString *appVersionText(void) {
+    NSDictionary *info = NSBundle.mainBundle.infoDictionary;
+    NSString *version = info[@"CFBundleShortVersionString"] ?: @"?";
+    NSString *build = info[@"CFBundleVersion"];
+    if ((build.length > 0) && ![build isEqualToString:version]) {
+        return [NSString stringWithFormat:@"v%@ (%@)", version, build];
+    }
+
+    return [NSString stringWithFormat:@"v%@", version];
 }
 
 #pragma mark - Setup
@@ -289,6 +302,16 @@ namespace {
     _trayBacking.userInteractionEnabled = NO;
     _trayBacking.hidden = YES;
     [self addSubview:_trayBacking];
+
+    // The app's version, shown with the tray (not a button).
+    _versionLabel = [[UILabel alloc] init];
+    _versionLabel.text = appVersionText();
+    _versionLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+    _versionLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.55];
+    _versionLabel.textAlignment = NSTextAlignmentCenter;
+    _versionLabel.userInteractionEnabled = NO;
+    _versionLabel.hidden = YES;
+    [self addSubview:_versionLabel];
 
     _stickBase = [CAShapeLayer layer];
     _stickBase.fillColor = [UIColor colorWithWhite:0.0 alpha:0.22].CGColor;
@@ -490,6 +513,8 @@ namespace {
 
     _trayBacking.frame = CGRectMake(midX - (trayCount * TrayStep) / 2.0 - 4, trayY - 26, trayCount * TrayStep + 8, 52);
     _opacityRow.center = CGPointMake(midX, trayY - 56);
+    // Just above the tray: START sits right below it.
+    _versionLabel.frame = CGRectMake(midX - 100, trayY - 40, 200, 12);
     _toast.frame = CGRectMake(midX - 140, top + 50, 280, 30);
     _flash.frame = self.bounds;
     _stickHome = CGPointMake(left + 100, bottom - 96);
@@ -708,6 +733,7 @@ namespace {
     }
 
     _trayBacking.hidden = !_trayOpen;
+    _versionLabel.hidden = !_trayOpen || !_opacityRow.hidden;
     // Modern hides the stick until a thumb lands; Classic shows where it rests.
     const CGFloat stickAlpha = (_stickTouch != nil ? 1.0 : (_classicControls ? IdleAlpha : 0.0)) * _opacity;
     _stickShown = (_stickTouch != nil);
