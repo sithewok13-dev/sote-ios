@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Publish this build as a GitHub release with this tag (e.g. v0.9.5); leave empty for a plain build
+        required: false
+        default: ""
 
 # A newer push makes an unfinished run pointless; macOS minutes are costly.
 concurrency:
@@ -68,24 +73,40 @@ jobs:
           name: SotE-unsigned-ipa
           path: SotE-unsigned.ipa
 
-  # The playable app. Needs the SOTE_ROM_KEY secret, which unlocks
-  # rom/sote.z64.gpg; without it this job does nothing. The unlocked ROM is
-  # deleted once the game code is generated, and is never put in the IPA:
-  # like SotE-Recomp's Windows release, players supply their own ROM.
+  # The playable app. The owner's ROM, encrypted, lives in their private
+  # files repo (branch sote-rom), read with the JK_FILES_TOKEN secret and
+  # unlocked with SOTE_ROM_KEY; without both this job does nothing. The
+  # unlocked ROM is deleted once the game code is generated, and is never put
+  # in the IPA: like SotE-Recomp's Windows release, players supply their own.
   game:
     runs-on: macos-15
     if: github.event_name != 'pull_request'
+    permissions:
+      contents: write  # the release, when one is asked for
     env:
       SOTE_ROM_KEY: ${{ secrets.SOTE_ROM_KEY }}
+      JK_FILES_TOKEN: ${{ secrets.JK_FILES_TOKEN }}
+      RELEASE_TAG: ${{ inputs.release }}
     steps:
-      - name: Check for the ROM key
+      - name: Check for the ROM and its key
         id: key
         run: |
-          if [ -n "$SOTE_ROM_KEY" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else
-            echo "::notice::SOTE_ROM_KEY is not set; skipping the game build."; fi
+          if [ -n "$SOTE_ROM_KEY" ] && [ -n "$JK_FILES_TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else
+            echo "::notice::SOTE_ROM_KEY or JK_FILES_TOKEN is not set; skipping the game build."
+            if [ -n "$RELEASE_TAG" ]; then echo "::error::A release needs the game build"; exit 1; fi
+          fi
 
       - uses: actions/checkout@v4
         if: steps.key.outputs.present == 'true'
+
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          repository: sithewok13-dev/jk-files
+          ref: sote-rom
+          token: ${{ secrets.JK_FILES_TOKEN }}
+          path: rom-store
+          persist-credentials: false
 
       - name: Submodules
         if: steps.key.outputs.present == 'true'
@@ -99,7 +120,8 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/rom"
           printf '%s' "$SOTE_ROM_KEY" | gpg --batch --quiet --pinentry-mode loopback \
-            --passphrase-fd 0 -d -o "$RUNNER_TEMP/rom/sote.z64" rom/sote.z64.gpg
+            --passphrase-fd 0 -d -o "$RUNNER_TEMP/rom/sote.z64" rom-store/sote.z64.gpg
+          rm -rf rom-store
           echo "e7085e013123537f34e0edec8801318016da4dbac424172d6dc5f3b67d98642c  $RUNNER_TEMP/rom/sote.z64" \
             | shasum -a 256 -c -
 
@@ -153,6 +175,24 @@ jobs:
           echo "IPA_NAME=SotE-iOS-$version.ipa" >> "$GITHUB_ENV"
           zip -qry "SotE-iOS-$version.ipa" Payload
           ls -l "SotE-iOS-$version.ipa"
+          # No ROM in the app, under any name: no file starting like an N64
+          # image (any byte order), and no encrypted copy.
+          python3 - <<'PY'
+          import os, sys
+          heads = {bytes.fromhex(h) for h in ("80371240", "37804012", "40123780")}
+          bad = []
+          for root, _, files in os.walk("Payload"):
+              for name in files:
+                  path = os.path.join(root, name)
+                  with open(path, "rb") as f:
+                      if f.read(4) in heads or name.lower().endswith((".z64", ".v64", ".n64", ".gpg")):
+                          bad.append(path)
+          if bad:
+              print("::error::The app holds something that looks like the ROM: " + ", ".join(bad))
+              sys.exit(1)
+          print("No ROM in the app.")
+          PY
+          echo "VERSION=$version" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
         if: steps.key.outputs.present == 'true'
@@ -160,3 +200,16 @@ jobs:
           name: ${{ env.IPA_NAME }}
           path: ${{ env.IPA_NAME }}
           retention-days: 30
+
+      - name: Publish the release
+        if: steps.key.outputs.present == 'true' && env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$RELEASE_TAG" != "v$VERSION" ]; then
+            echo "::error::Tag $RELEASE_TAG doesn't match the app's version $VERSION"; exit 1
+          fi
+          grep -qx "### What's in $RELEASE_TAG" docs/RELEASE_NOTES.md || {
+            echo "::error::docs/RELEASE_NOTES.md has no line \"### What's in $RELEASE_TAG\""; exit 1; }
+          gh release create "$RELEASE_TAG" "$IPA_NAME" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "Shadows of the Empire for iOS $RELEASE_TAG" --notes-file docs/RELEASE_NOTES.md --latest

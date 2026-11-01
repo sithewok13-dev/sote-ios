@@ -1,31 +1,29 @@
 # Shadows of the Empire for iOS
 
-A private port of Star Wars: Shadows of the Empire (N64) to iPhone and iPad,
-built on [N64Recomp], [N64ModernRuntime] and [RT64] (Metal through plume).
+An unofficial port of Star Wars: Shadows of the Empire (N64) to iPhone and
+iPad, built on [N64Recomp], [N64ModernRuntime] and [RT64] (Metal through
+plume). Releases: see this repository's Releases page.
 
 **This repository holds no ROM, no ROM-derived code and no game data.** You
-supply your own USA v1.2 (Rev 2) ROM locally; anything built from it stays
-on your machine and your device. `.gitignore` blocks ROM files and the
-`generated/` output.
+supply your own USA v1.2 (Rev 2) ROM; the app reads it from your device.
+`.gitignore` blocks ROM files and the `generated/` output.
 
-Planning notes live in `jk-files` (branch `wip-sote-ios`).
+## Thanks
+
+This port exists because of [SotE-Recomp] by GTTeancum. Asked whether it
+could be ported, GTTeancum licensed SotE-Recomp's original code under MIT
+(2026-10-28, commit `7aec3d4`, answering issue #21) and welcomed ports. Its
+game code is the game layer here. Per its `LICENSES.md`, that grant does not
+cover game files, music (`Sdata/MUSIC`), artwork, fonts or ROM-derived code,
+so none of those are copied here. The submodules are pinned to the same
+upstream commits SotE-Recomp uses. Thanks also to the [N64Recomp] and [RT64]
+projects.
 
 ## Status
 
-| Step | State |
-| --- | --- |
-| Repo, GPL-3.0 licence, pinned submodules | done |
-| iOS shell: UIKit app, plume on Metal, rdram reservation probe | works on device (0.1.2) |
-| RT64 on iOS: builds, 56 shaders compiled to Metal libraries | builds (0.2.0); not yet run on device |
-| Game layer: SotE-Recomp's code (now MIT) on iOS | compiles for iOS; first playable build pending (0.4.0) |
-| Touch controls, tray, camera, cheats, level selector, gyro | 0.8.0 |
-
-The game layer comes from [SotE-Recomp] by GTTeancum, who licensed its original
-code under MIT on 2026-10-28 (commit `7aec3d4`, answering issue #21) and
-welcomed ports. Per its `LICENSES.md`, that grant does not cover game files,
-music (`Sdata/MUSIC`), artwork, fonts or ROM-derived code, so none of those
-are copied here or bundled into builds. The submodules are pinned to the same
-upstream commits SotE-Recomp uses.
+Playable on iPhone (v0.9.5): touch controls, tray, photos and bursts,
+cheats, level selector, gyro. Selfies, Action Freeze and the cinematic burst
+are still being worked on.
 
 ## Layout
 
@@ -117,14 +115,15 @@ extended-virtual-addressing entitlement is needed.
 
 ## Building the playable app
 
-The app needs code generated from the ROM, which can't live in this repo. With
-the owner's agreement (2026-10-29), `rom/sote.z64.gpg` holds their ROM
-encrypted with AES-256 (GnuPG). The `game` CI job unlocks it with the
-`SOTE_ROM_KEY` Actions secret, generates the code (SotE-Recomp's
+The app needs code generated from the ROM, which can't live in this repo.
+The owner's ROM, encrypted with AES-256 (GnuPG), is kept in their private
+files repo. The `game` CI job reads it with the `JK_FILES_TOKEN` secret,
+unlocks it with `SOTE_ROM_KEY`, generates the code (SotE-Recomp's
 `prepare_recomp_rom.py`, N64Recomp, RSPRecomp), deletes the unlocked ROM,
-builds the app with `-DSOTE_GENERATED_DIR=...` and uploads
-`SotE-iOS-<version>.ipa`, kept for 30 days. Without the secret the job is
-skipped.
+builds the app with `-DSOTE_GENERATED_DIR=...`, checks that nothing like the
+ROM is in it, and uploads `SotE-iOS-<version>.ipa`, kept for 30 days. A
+manual run with `release=v<version>` also publishes it as a GitHub release
+with `docs/RELEASE_NOTES.md`. Without the secrets the job is skipped.
 
 Like SotE-Recomp's Windows release, the IPA contains no ROM: every player
 supplies their own. It holds the recompiled game code (as SotE-Recomp's
