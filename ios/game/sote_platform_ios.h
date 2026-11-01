@@ -18,8 +18,9 @@ namespace sote::platform {
     // game's own mouse look (Modern on foot, and vehicle steering).
     void ios_add_look(int x, int y);
 
-    // True while the game is drawing a message box (Start dismisses it).
-    bool ios_message_showing();
+    // True while the game is drawing a message box (Start dismisses it),
+    // with its top line's height in N64 pixels (0-240).
+    bool ios_message_showing(int *top);
 
     // Holds or releases the game (freeze camera, selfies).
     void ios_set_game_held(bool held);

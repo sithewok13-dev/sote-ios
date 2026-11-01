@@ -41,11 +41,15 @@ namespace sote::platform {
             std::chrono::steady_clock::now().time_since_epoch()).count();
     }
 
-    void note_message_drawn() {
+    static std::atomic<int> message_top{0};
+
+    void note_message_drawn(int top) {
+        message_top.store(top);
         message_drawn_ms.store(steady_ms());
     }
 
-    bool ios_message_showing() {
+    bool ios_message_showing(int *top) {
+        *top = message_top.load();
         return steady_ms() - message_drawn_ms.load() < 250;
     }
 

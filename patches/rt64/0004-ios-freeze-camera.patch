@@ -1,5 +1,5 @@
 diff --git a/src/hle/rt64_state.cpp b/src/hle/rt64_state.cpp
-index 7cae864..f529e04 100644
+index 7cae864..3bbfb4c 100644
 --- a/src/hle/rt64_state.cpp
 +++ b/src/hle/rt64_state.cpp
 @@ -5,7 +5,10 @@
@@ -13,7 +13,7 @@ index 7cae864..f529e04 100644
  #include <cstdlib>
  
  #include "im3d/im3d.h"
-@@ -29,6 +32,66 @@
+@@ -29,6 +32,67 @@
  #define MI_INTR_SP          0x00000001
  
  namespace RT64 {
@@ -39,6 +39,7 @@ index 7cae864..f529e04 100644
 +            hlslpp::float3 back;
 +            float radius = 1.0f;
 +            float viewScale = 1.0f;
++            hlslpp::float4x4 gameInvView;
 +            float yaw = 0.0f;
 +            float pitch = 0.0f;
 +        };
@@ -80,7 +81,7 @@ index 7cae864..f529e04 100644
      const float ShiftScaleMap[] = {
          1.0f,
          1.0f / 2.0f,
-@@ -1846,7 +1909,136 @@ namespace RT64 {
+@@ -1846,7 +1910,141 @@ namespace RT64 {
          clearExtended();
      }
      
@@ -113,6 +114,9 @@ index 7cae864..f529e04 100644
 +        camera.viewMatrix = workload.drawData.viewTransforms[best->transformsIndex];
 +        camera.invViewMatrix = hlslpp::inverse(camera.viewMatrix);
 +        camera.projMatrix = workload.drawData.projTransforms[best->transformsIndex];
++        camera.iosRelative = true;
++        camera.iosDelta = hlslpp::float4x4::identity();
++        iosFreezeBase.gameInvView = camera.invViewMatrix;
 +
 +        // RT64's camera: position, and side/up/back axes with their length
 +        // (the game's view may carry a scale, which the orbit keeps).
@@ -198,6 +202,7 @@ index 7cae864..f529e04 100644
 +        const hlslpp::float3 pan = hlslpp::normalize(camera.invViewMatrix[0].xyz) * (iosFreezePanX.load() * radius) +
 +            hlslpp::normalize(camera.invViewMatrix[1].xyz) * (iosFreezePanY.load() * radius);
 +        iosFreezeLookAt(camera, position + pan, focus + pan, base.up, base.viewScale);
++        camera.iosDelta = hlslpp::mul(base.gameInvView, camera.viewMatrix);
 +    }
 +
      void State::updateScreen(const VI &newVI, bool fromEarlyPresent) {
@@ -207,6 +212,7 @@ index 7cae864..f529e04 100644
 +        else if (!iosFreezeRequested.load() && iosFreezeActive.load()) {
 +            debuggerInspector.paused = false;
 +            debuggerInspector.camera.enabled = false;
++            debuggerInspector.camera.iosRelative = false;
 +            iosFreezeActive.store(false);
 +        }
 +
@@ -260,3 +266,38 @@ index 7a8c13b..735f7b1 100644
          void updateScreen(const VI &newVI, bool fromEarlyPresent);
          void updateMultisampling();
          void inspect();
+diff --git a/src/hle/rt64_workload.h b/src/hle/rt64_workload.h
+index 8ea27d5..a240043 100644
+--- a/src/hle/rt64_workload.h
++++ b/src/hle/rt64_workload.h
+@@ -199,6 +199,14 @@ namespace RT64 {
+         float nearPlane;
+         float farPlane;
+         float fov;
++
++        // iOS freeze camera: move every perspective projection by the same
++        // eye-space change (its own view times iosDelta), keeping its own
++        // projection, rather than replacing them all with one view. Games
++        // draw parts of a scene (near and far, the player) with different
++        // projections.
++        bool iosRelative = false;
++        hlslpp::float4x4 iosDelta;
+     };
+ 
+     struct SpriteCommand {
+diff --git a/src/render/rt64_projection_processor.cpp b/src/render/rt64_projection_processor.cpp
+index e842dcc..7cca215 100644
+--- a/src/render/rt64_projection_processor.cpp
++++ b/src/render/rt64_projection_processor.cpp
+@@ -107,7 +107,10 @@ namespace RT64 {
+             viewProjMatrix = drawData.viewProjTransforms[proj.transformsIndex];
+ 
+             // Debugger camera.
+-            if (workload.debuggerCamera.enabled && (proj.type == Projection::Type::Perspective) && (workload.debuggerCamera.sceneIndex == sceneIndex)) {
++            if (workload.debuggerCamera.enabled && workload.debuggerCamera.iosRelative && (proj.type == Projection::Type::Perspective)) {
++                viewMatrix = hlslpp::mul(hlslpp::float4x4(drawData.viewTransforms[proj.transformsIndex]), workload.debuggerCamera.iosDelta);
++            }
++            else if (workload.debuggerCamera.enabled && (proj.type == Projection::Type::Perspective) && (workload.debuggerCamera.sceneIndex == sceneIndex)) {
+                 viewMatrix = workload.debuggerCamera.viewMatrix;
+                 projMatrix = workload.debuggerCamera.projMatrix;
+             }

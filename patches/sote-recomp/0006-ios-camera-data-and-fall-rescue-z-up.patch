@@ -1,5 +1,5 @@
 diff --git a/src/main.cpp b/src/main.cpp
-index 457ca53..1c6fa49 100644
+index 457ca53..d8f48cc 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -3187,20 +3187,22 @@ void cheat_reload_settings() {
@@ -112,6 +112,18 @@ index 457ca53..1c6fa49 100644
 +    while (sote::platform::game_held()) {
 +        std::this_thread::sleep_for(std::chrono::milliseconds(5));
 +    }
+ #endif
+ }
+ 
+@@ -4711,8 +4747,9 @@ extern "C" void sote_note_droid_text_buffer_draw(
+             static_cast<uint64_t>(vi_count.load(std::memory_order_relaxed)),
+             event, slot);
+ #ifndef _WIN32
+-    // iOS: a tap dismisses messages (with Start) only while one is drawn.
+-    if (!text.empty()) sote::platform::note_message_drawn();
++    // iOS: a tap on a message dismisses it (with Start), only while one is
++    // drawn and visible, and only on it (its top line, in N64 pixels).
++    if (!text.empty() && valid_position && a > 0) sote::platform::note_message_drawn(position_y);
  #endif
  }
  

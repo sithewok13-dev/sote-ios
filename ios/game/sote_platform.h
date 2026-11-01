@@ -32,8 +32,9 @@ namespace sote::platform {
     // the game thread every VI.
     int take_level_jump();
 
-    // Called from the game thread each time a message box's text is drawn.
-    void note_message_drawn();
+    // Called from the game thread each time a visible message box's text is
+    // drawn, with its top in N64 pixels (0-240).
+    void note_message_drawn(int top);
 
     // Called from the game thread every frame with Dash's world position on
     // foot (NaN otherwise), for the freeze camera.

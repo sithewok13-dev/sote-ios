@@ -202,6 +202,8 @@ namespace {
     // Short presses queued by menu taps and swipes: bit, start, end.
     std::vector<std::tuple<uint16_t, CFTimeInterval, CFTimeInterval>> _pulses;
     CFTimeInterval _pulseCursor;
+    // The stick was drawn under a thumb at the last refresh.
+    bool _stickShown;
     // Look drag fractions not yet sent.
     double _lookCarryX;
     double _lookCarryY;
@@ -707,6 +709,7 @@ namespace {
     _trayBacking.hidden = !_trayOpen;
     // Modern hides the stick until a thumb lands; Classic shows where it rests.
     const CGFloat stickAlpha = (_stickTouch != nil ? 1.0 : (_classicControls ? IdleAlpha : 0.0)) * _opacity;
+    _stickShown = (_stickTouch != nil);
     _stickBase.opacity = float(stickAlpha);
     _stickKnobLayer.opacity = float(stickAlpha);
     _stickBase.path = [UIBezierPath bezierPathWithOvalInRect:CGRectMake(_stickOrigin.x - StickRadius, _stickOrigin.y - StickRadius, 2 * StickRadius, 2 * StickRadius)].CGPath;
@@ -898,7 +901,7 @@ namespace {
                     [self pulse:N64A];
                 }
             }
-            else if (sote::platform::ios_message_showing()) {
+            else if ([self tapOnMessage:state.last]) {
                 // A tap clears a message box, like Start.
                 [self pulse:N64Start];
             }
@@ -920,6 +923,21 @@ namespace {
 // True while one of the game's menus (pause, options, profiles...) is up.
 - (bool)menuShowing {
     return sote::menu_skin::latest() != nullptr;
+}
+
+// A tap on a message box the game is showing: within the 4:3 picture, from
+// a little above its first line to a few lines below it (N64 pixels, 240
+// to the screen's height). Taps elsewhere, on the HUD or radar, are not.
+- (bool)tapOnMessage:(CGPoint)p {
+    int top = 0;
+    if (!sote::platform::ios_message_showing(&top)) {
+        return false;
+    }
+
+    const CGFloat height = self.bounds.size.height;
+    const CGFloat y = p.y / height * 240.0;
+    const bool inPicture = std::fabs(p.x - self.bounds.size.width / 2.0) < height * 2.0 / 3.0;
+    return inPicture && (y >= top - 16) && (y <= top + 64);
 }
 
 // The game's menus are drawn on a 960 x 540 canvas, fitted to the screen's
@@ -1373,7 +1391,11 @@ static float randomBetween(float low, float high) {
     if (_shot == Shot::Selfie) {
         // In front of Dash, a little above, at arm's length, a fresh angle
         // for each shot.
-        [self setOrbitYaw:float(M_PI) + randomBetween(-0.35f, 0.35f) pitch:randomBetween(0.05f, 0.3f) zoom:randomBetween(0.35f, 0.55f)];
+        // Three-quarters on and looking a little down, rather than straight
+        // at his face: the game only drew what its own camera could see, so
+        // a view straight back towards it can be empty sky.
+        const float side = (arc4random_uniform(2) == 0) ? -1.0f : 1.0f;
+        [self setOrbitYaw:float(M_PI) + side * randomBetween(0.45f, 0.85f) pitch:randomBetween(0.15f, 0.4f) zoom:randomBetween(0.4f, 0.6f)];
     }
     else {
         // Sweep round the frozen moment.
@@ -1643,7 +1665,9 @@ static float randomBetween(float low, float high) {
     }
 
     sote::platform::ios_set_touch_input(bits, x, y);
-    if (changed || (_stickTouch != nil)) {
+    // Redraw while the stick is held, and once more when it is let go, so
+    // it disappears with the thumb.
+    if (changed || (_stickTouch != nil) || _stickShown) {
         [self refresh];
     }
 }
