@@ -208,6 +208,18 @@ namespace {
     CFTimeInterval _pulseCursor;
     // One of the game's menus was up at the last tick.
     bool _menuWasShowing;
+    // The launcher over the game's player screen, and the presses it makes
+    // on the player's behalf (see "Launcher").
+    UIView *_launcher;
+    bool _launcherSuppressed;
+    int _launchStage;
+    int _launchSlot;
+    bool _launchContinue;
+    CFTimeInterval _launchDeadline;
+    int _launchSteps;
+    // The game's menu rows as last logged, and when to look again.
+    NSString *_menuLogText;
+    CFTimeInterval _menuLogNext;
     // The stick was drawn under a thumb at the last refresh.
     bool _stickShown;
     // Look drag fractions not yet sent.
@@ -1206,6 +1218,10 @@ static bool menuRowSelected(const sote::menu_skin::Row &row) {
 // Queues a short press of an N64 button, after any already queued, so
 // repeated presses are seen as separate.
 - (void)pulse:(uint16_t)bit {
+    if (_menuWasShowing) {
+        sote::log("touch: press %04X", bit);
+    }
+
     const CFTimeInterval start = std::max(CACurrentMediaTime(), _pulseCursor);
     _pulses.emplace_back(bit, start, start + MenuPulse);
     _pulseCursor = start + MenuPulse + MenuPulseGap;
@@ -1568,6 +1584,322 @@ static float randomBetween(float low, float high) {
     RT64::iosFreezePitch.store(std::clamp(RT64::iosFreezePitch.load() + float(delta.y) * OrbitRadiansPerPoint, -1.4f, 1.4f));
 }
 
+#pragma mark - Launcher
+
+// Over the game's player screen ("Press Start to select"), a card of the
+// app's own: CONTINUE as the last player, NEW PLAYER, CHANGE PLAYER, or the
+// game's own screen. The app then works the game's screens itself: it moves
+// the game's selection to the player with D-pad presses (watching the
+// game's own selection), presses Start, and for CONTINUE presses Start again
+// on the player's summary.
+
+struct LauncherSlot {
+    NSString *name;
+    NSString *difficulty;
+    bool filled;
+};
+
+static std::vector<LauncherSlot> launcherSlots(void) {
+    std::vector<LauncherSlot> slots;
+    const auto snapshot = sote::menu_skin::latest();
+    if ((snapshot == nullptr) || (snapshot->screen != sote::menu_skin::Screen::Profiles)) {
+        return slots;
+    }
+
+    for (int i = 0; i < 4; i++) {
+        LauncherSlot slot;
+        slot.name = [NSString stringWithUTF8String:snapshot->rows[51 + i].text.c_str()] ?: @"";
+        slot.filled = snapshot->rows[70 + i].visible();
+        slot.difficulty = slot.filled ? ([NSString stringWithUTF8String:snapshot->rows[70 + i].text.c_str()] ?: @"") : @"";
+        slots.push_back(slot);
+    }
+
+    return slots;
+}
+
+// The player CONTINUE plays: the last one chosen here, else the one the
+// game has selected, else the first saved one; -1 with none saved.
+- (int)continueSlot:(const std::vector<LauncherSlot> &)slots {
+    const NSInteger saved = [NSUserDefaults.standardUserDefaults integerForKey:@"iosLastPlayerSlot"];
+    if ((saved >= 1) && (saved <= 4) && slots[size_t(saved - 1)].filled) {
+        return int(saved - 1);
+    }
+
+    const int focus = [self menuFocusFor:1];
+    if ((focus >= 100) && (focus < 104) && slots[size_t(focus - 100)].filled) {
+        return focus - 100;
+    }
+
+    for (size_t i = 0; i < slots.size(); i++) {
+        if (slots[i].filled) {
+            return int(i);
+        }
+    }
+
+    return -1;
+}
+
+static UIColor *LauncherBlue(void) {
+    return [UIColor colorWithRed:0.47 green:0.78 blue:1.0 alpha:1.0];
+}
+
+- (UIButton *)launcherButton:(NSString *)title detail:(NSString *)detail frame:(CGRect)frame action:(SEL)action tag:(NSInteger)tag {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    button.frame = frame;
+    button.tag = tag;
+    button.backgroundColor = [UIColor colorWithWhite:1.0 alpha:0.08];
+    button.layer.cornerRadius = 12;
+    button.layer.borderWidth = 1.5;
+    button.layer.borderColor = [LauncherBlue() colorWithAlphaComponent:0.7].CGColor;
+    NSMutableAttributedString *text = [[NSMutableAttributedString alloc] initWithString:title
+        attributes:@{ NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: [UIFont boldSystemFontOfSize:17] }];
+    if (detail.length > 0) {
+        [text appendAttributedString:[[NSAttributedString alloc] initWithString:[@"   " stringByAppendingString:detail]
+            attributes:@{ NSForegroundColorAttributeName: LauncherBlue(), NSFontAttributeName: [UIFont systemFontOfSize:15] }]];
+    }
+
+    [button setAttributedTitle:text forState:UIControlStateNormal];
+    [button addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    return button;
+}
+
+- (UIView *)launcherCardWithTitle:(NSString *)titleText rows:(int)rows card:(UIView **)cardOut width:(CGFloat *)widthOut {
+    UIView *dim = [[UIView alloc] initWithFrame:self.bounds];
+    dim.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    dim.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.6];
+    const CGFloat width = std::min(CGFloat(420), self.bounds.size.width - 40);
+    const CGFloat height = 50 + rows * 60 + 44;
+    UIView *card = [[UIView alloc] initWithFrame:CGRectMake((self.bounds.size.width - width) / 2, (self.bounds.size.height - height) / 2, width, height)];
+    card.backgroundColor = [UIColor colorWithWhite:0.05 alpha:0.94];
+    card.layer.cornerRadius = 18;
+    card.layer.borderWidth = 1.5;
+    card.layer.borderColor = [LauncherBlue() colorWithAlphaComponent:0.6].CGColor;
+    [dim addSubview:card];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(16, 12, width - 32, 28)];
+    title.text = titleText;
+    title.textAlignment = NSTextAlignmentCenter;
+    title.textColor = LauncherBlue();
+    title.font = [UIFont fontWithName:@"AvenirNextCondensed-Bold" size:19] ?: [UIFont boldSystemFontOfSize:19];
+    [card addSubview:title];
+    UIButton *own = [UIButton buttonWithType:UIButtonTypeSystem];
+    own.frame = CGRectMake(16, height - 40, width - 32, 32);
+    [own setTitle:@"Use the game's own screen" forState:UIControlStateNormal];
+    [own setTitleColor:[UIColor colorWithWhite:1.0 alpha:0.55] forState:UIControlStateNormal];
+    own.titleLabel.font = [UIFont systemFontOfSize:13];
+    [own addTarget:self action:@selector(launcherUseGame) forControlEvents:UIControlEventTouchUpInside];
+    [card addSubview:own];
+    *cardOut = card;
+    *widthOut = width;
+    return dim;
+}
+
+- (void)openLauncher {
+    const auto slots = launcherSlots();
+    if (slots.empty()) {
+        return;
+    }
+
+    [self closeTray];
+    [_launcher removeFromSuperview];
+    const int cont = [self continueSlot:slots];
+    int filled = 0;
+    bool empty = false;
+    for (const auto &slot : slots) {
+        filled += slot.filled ? 1 : 0;
+        empty = empty || !slot.filled;
+    }
+
+    const int rows = ((cont >= 0) ? 1 : 0) + (empty ? 1 : 0) + ((filled > 1) ? 1 : 0);
+    UIView *card = nil;
+    CGFloat width = 0;
+    UIView *dim = [self launcherCardWithTitle:@"SHADOWS OF THE EMPIRE" rows:rows card:&card width:&width];
+    CGFloat y = 50;
+    if (cont >= 0) {
+        NSString *detail = [NSString stringWithFormat:@"%@ · %@", slots[size_t(cont)].name, slots[size_t(cont)].difficulty];
+        [card addSubview:[self launcherButton:@"CONTINUE" detail:detail frame:CGRectMake(16, y, width - 32, 50) action:@selector(launcherContinue:) tag:cont]];
+        y += 60;
+    }
+
+    if (empty) {
+        [card addSubview:[self launcherButton:@"NEW PLAYER" detail:@"" frame:CGRectMake(16, y, width - 32, 50) action:@selector(launcherNewPlayer) tag:0]];
+        y += 60;
+    }
+
+    if (filled > 1) {
+        [card addSubview:[self launcherButton:@"CHANGE PLAYER" detail:@"" frame:CGRectMake(16, y, width - 32, 50) action:@selector(launcherChangePlayer) tag:0]];
+    }
+
+    _launcher = dim;
+    [self addSubview:dim];
+    gyroSuppressed.store(true);
+    sote::log("launcher: open (continue slot %d, %d saved)", cont + 1, filled);
+}
+
+- (void)launcherChangePlayer {
+    const auto slots = launcherSlots();
+    if (slots.empty()) {
+        return;
+    }
+
+    [_launcher removeFromSuperview];
+    UIView *card = nil;
+    CGFloat width = 0;
+    UIView *dim = [self launcherCardWithTitle:@"CHOOSE A PLAYER" rows:int(slots.size()) card:&card width:&width];
+    for (size_t i = 0; i < slots.size(); i++) {
+        const LauncherSlot &slot = slots[i];
+        UIButton *row = [self launcherButton:(slot.filled ? slot.name : @"EMPTY")
+                                      detail:(slot.filled ? slot.difficulty : @"new player")
+                                       frame:CGRectMake(16, 50 + CGFloat(i) * 60, width - 32, 50)
+                                      action:@selector(launcherSlotChosen:)
+                                         tag:NSInteger(i)];
+        [card addSubview:row];
+    }
+
+    _launcher = dim;
+    [self addSubview:dim];
+}
+
+- (void)closeLauncher {
+    [_launcher removeFromSuperview];
+    _launcher = nil;
+    gyroSuppressed.store(_trayOpen || (_levelCard != nil));
+}
+
+- (void)launcherUseGame {
+    _launcherSuppressed = true;
+    [self closeLauncher];
+    sote::log("launcher: the game's own screen");
+}
+
+- (void)launcherContinue:(UIButton *)button {
+    [self launchSlot:int(button.tag) thenContinue:true];
+}
+
+- (void)launcherNewPlayer {
+    const auto slots = launcherSlots();
+    for (size_t i = 0; i < slots.size(); i++) {
+        if (!slots[i].filled) {
+            [self launchSlot:int(i) thenContinue:false];
+            return;
+        }
+    }
+}
+
+- (void)launcherSlotChosen:(UIButton *)button {
+    const auto slots = launcherSlots();
+    const int slot = int(button.tag);
+    if ((slot < 0) || (size_t(slot) >= slots.size())) {
+        return;
+    }
+
+    [self launchSlot:slot thenContinue:slots[size_t(slot)].filled];
+}
+
+// Moves the game's selection to a player slot and presses Start; then, for
+// a saved player, Start again on their summary to go into the game. A new
+// player is left on the game's own naming screens (D-pad shown).
+- (void)launchSlot:(int)slot thenContinue:(bool)cont {
+    [self closeLauncher];
+    _launcherSuppressed = true;
+    _launchSlot = slot;
+    _launchContinue = cont;
+    _launchStage = 1;
+    _launchSteps = 0;
+    _menuLastFocus = -1;
+    _launchDeadline = CACurrentMediaTime() + 8.0;
+    if (cont) {
+        [NSUserDefaults.standardUserDefaults setInteger:slot + 1 forKey:@"iosLastPlayerSlot"];
+    }
+
+    sote::log("launcher: slot %d, %s", slot + 1, cont ? "continue" : "new player");
+}
+
+- (void)tickLauncher:(CFTimeInterval)now {
+    const auto snapshot = sote::menu_skin::latest();
+    const bool profiles = (snapshot != nullptr) && (snapshot->screen == sote::menu_skin::Screen::Profiles);
+    if (_launchStage == 0) {
+        if (!profiles) {
+            // Off the player screen: next time it comes up, so does the card.
+            _launcherSuppressed = false;
+            if (_launcher != nil) {
+                [self closeLauncher];
+            }
+        }
+        else if ((_launcher == nil) && !_launcherSuppressed && (_shot == Shot::None) && (_levelCard == nil)) {
+            [self openLauncher];
+        }
+
+        return;
+    }
+
+    if ((now > _launchDeadline) || (_launchSteps > 16)) {
+        sote::log("launcher: gave up at stage %d", _launchStage);
+        _launchStage = 0;
+        return;
+    }
+
+    // Let the last press land and the menu redraw before looking again.
+    if (!_pulses.empty() || (now < _pulseCursor + 0.08)) {
+        return;
+    }
+
+    if (_launchStage == 1) {
+        if (!profiles) {
+            _launchStage = 0;
+            return;
+        }
+
+        const int focus = [self menuFocusFor:1];
+        const int target = 100 + _launchSlot;
+        if (focus == target) {
+            [self pulse:N64Start];
+            _launchStage = _launchContinue ? 2 : 0;
+            return;
+        }
+
+        // On the Options / Rename / Clear row, or below the player: up;
+        // above it: down.
+        _launchSteps++;
+        [self pulse:((focus < 100) || (focus > target)) ? N64DUp : N64DDown];
+        return;
+    }
+
+    if (_launchStage == 2) {
+        if ((snapshot != nullptr) && (snapshot->screen == sote::menu_skin::Screen::Summary)) {
+            [self pulse:N64Start];
+            _launchStage = 0;
+            sote::log("launcher: into the game");
+        }
+    }
+}
+
+// Writes the game's menu rows to the log when they change (at most twice a
+// second), to learn the screens the app doesn't know yet, such as naming a
+// player.
+- (void)logMenu:(CFTimeInterval)now {
+    if (now < _menuLogNext) {
+        return;
+    }
+
+    _menuLogNext = now + 0.5;
+    const auto snapshot = sote::menu_skin::latest();
+    NSMutableString *text = [NSMutableString string];
+    if (snapshot != nullptr) {
+        [text appendFormat:@"%s", sote::menu_skin::screen_name(snapshot->screen)];
+        for (int i = 0; i < 80; i++) {
+            const auto &row = snapshot->rows[size_t(i)];
+            if (row.visible()) {
+                [text appendFormat:@" | %d@%d,%d #%08X %s", i, row.x, row.y, row.color, row.text.c_str()];
+            }
+        }
+    }
+
+    if (![text isEqualToString:(_menuLogText ?: @"")]) {
+        _menuLogText = [text copy];
+        sote::log("menu: %s", text.length > 0 ? [text substringToIndex:std::min<NSUInteger>(text.length, 1800)].UTF8String : "none");
+    }
+}
+
 #pragma mark - Level selector
 
 - (void)openLevelCard {
@@ -1638,6 +1970,10 @@ static float randomBetween(float low, float high) {
         return [_levelCard hitTest:[self convertPoint:point toView:_levelCard] withEvent:event] ?: _levelCard;
     }
 
+    if (_launcher != nil) {
+        return [_launcher hitTest:[self convertPoint:point toView:_launcher] withEvent:event] ?: _launcher;
+    }
+
     if (!_opacityRow.hidden && CGRectContainsPoint(_opacityRow.frame, point)) {
         return [_opacityRow hitTest:[self convertPoint:point toView:_opacityRow] withEvent:event];
     }
@@ -1657,6 +1993,8 @@ static float randomBetween(float low, float high) {
         [self refresh];
     }
     [self tickMenuTap:now];
+    [self tickLauncher:now];
+    [self logMenu:now];
     for (auto &entry : _touches) {
         TouchState &state = entry.second;
         if (state.role != Role::Control) {

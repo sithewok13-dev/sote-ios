@@ -163,6 +163,9 @@ not cover ROM-derived code or the game's names, art and media.
      bottomless falls (he is put back on the last ledge he stood on). Its
      sound is the app's own, or a random clip of yours from Files > SotE >
      Cheat Sounds;
+   On the game's player screen the app shows its own card: CONTINUE (the
+   last player, straight into the game), NEW PLAYER, CHANGE PLAYER, or the
+   game's own screen; the app works the game's screens itself.
    In the game's menus, tap a row of the pause or options menu, or a player or Options /
    Rename / Clear on the player screen, to pick it
    (elsewhere a tap is A), and swipe up, down, left or right for the D-pad;
