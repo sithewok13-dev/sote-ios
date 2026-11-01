@@ -163,7 +163,8 @@ not cover ROM-derived code or the game's names, art and media.
      bottomless falls (he is put back on the last ledge he stood on). Its
      sound is the app's own, or a random clip of yours from Files > SotE >
      Cheat Sounds;
-   In the game's menus, tap a row of the pause or options menu to pick it
+   In the game's menus, tap a row of the pause or options menu, or a player or Options /
+   Rename / Clear on the player screen, to pick it
    (elsewhere a tap is A), and swipe up or down to move between rows. A tap on a message box clears it (Start). A game controller works too.
 
 If anything goes wrong, `sote-log.txt` and the `logs` folder in the same

@@ -38,7 +38,7 @@ namespace sote::platform {
 
     // Called from the game thread every frame with Dash's world position on
     // foot (NaN otherwise), for the freeze camera.
-    void note_player_position(float x, float y, float z);
+    void note_player_position(float x, float y, float z, float half_height);
 
     // Called from the game thread every frame with the game camera's eye and
     // forward direction in world units (z up; NaN when there is none).

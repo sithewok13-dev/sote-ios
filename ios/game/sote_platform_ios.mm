@@ -58,7 +58,10 @@ namespace sote::platform {
     static std::atomic<float> player_y{NAN};
     static std::atomic<float> player_z{NAN};
 
-    void note_player_position(float x, float y, float z) {
+    static std::atomic<float> player_size{0.0f};
+
+    void note_player_position(float x, float y, float z, float half_height) {
+        player_size.store(half_height);
         player_x.store(x);
         player_y.store(y);
         player_z.store(z);
@@ -92,7 +95,8 @@ namespace sote::platform {
         held.store(hold);
     }
 
-    bool ios_player_position(float *x, float *y, float *z) {
+    bool ios_player_position(float *x, float *y, float *z, float *half_height) {
+        *half_height = player_size.load();
         *x = player_x.load();
         *y = player_y.load();
         *z = player_z.load();

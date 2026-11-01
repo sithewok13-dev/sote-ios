@@ -1,5 +1,5 @@
 diff --git a/src/hle/rt64_state.cpp b/src/hle/rt64_state.cpp
-index 7cae864..3bbfb4c 100644
+index 7cae864..2e4fcf2 100644
 --- a/src/hle/rt64_state.cpp
 +++ b/src/hle/rt64_state.cpp
 @@ -5,7 +5,10 @@
@@ -13,7 +13,7 @@ index 7cae864..3bbfb4c 100644
  #include <cstdlib>
  
  #include "im3d/im3d.h"
-@@ -29,6 +32,67 @@
+@@ -29,6 +32,68 @@
  #define MI_INTR_SP          0x00000001
  
  namespace RT64 {
@@ -22,6 +22,7 @@ index 7cae864..3bbfb4c 100644
 +    std::atomic<bool> iosFreezeActive{false};
 +    std::atomic<bool> iosFreezeHasPivot{false};
 +    std::atomic<float> iosFreezePivot[3] = {};
++    std::atomic<float> iosFreezeSize{0.0f};
 +    std::atomic<bool> iosFreezeHasEye{false};
 +    std::atomic<float> iosFreezeEye[3] = {};
 +    std::atomic<float> iosFreezeForward[3] = {};
@@ -81,7 +82,7 @@ index 7cae864..3bbfb4c 100644
      const float ShiftScaleMap[] = {
          1.0f,
          1.0f / 2.0f,
-@@ -1846,7 +1910,141 @@ namespace RT64 {
+@@ -1846,7 +1911,152 @@ namespace RT64 {
          clearExtended();
      }
      
@@ -143,6 +144,7 @@ index 7cae864..3bbfb4c 100644
 +        // only differ by scale; otherwise assume 1. Without Dash, orbit a
 +        // point a little ahead of the camera.
 +        hlslpp::float3 pivot = position + forward * 25.0f;
++        float minRadius = 0.0f;
 +        if (iosFreezeHasEye.load() && iosFreezeHasPivot.load()) {
 +            const hlslpp::float3 eye(iosFreezeEye[0].load(), iosFreezeEye[1].load(), iosFreezeEye[2].load());
 +            const hlslpp::float3 player(iosFreezePivot[0].load(), iosFreezePivot[1].load(), iosFreezePivot[2].load());
@@ -167,6 +169,10 @@ index 7cae864..3bbfb4c 100644
 +                const float reach = float(hlslpp::length(offset));
 +                if ((along > 0.0f) && (reach < 2000.0f)) {
 +                    pivot = position + (forward * along + right * side + viewUp * lift) * unit;
++                    const float size = iosFreezeSize.load();
++                    if (std::isfinite(size) && (size > 0.0f) && (size < 200.0f)) {
++                        minRadius = 6.0f * size * unit;
++                    }
 +                }
 +            }
 +        }
@@ -185,6 +191,12 @@ index 7cae864..3bbfb4c 100644
 +        iosFreezeBase.radius = std::max(float(hlslpp::length(offset)), 0.01f);
 +        iosFreezeBase.yaw = std::atan2(float(hlslpp::dot(offset, iosFreezeBase.across)), float(hlslpp::dot(offset, iosFreezeBase.back)));
 +        iosFreezeBase.pitch = std::asin(std::clamp(float(hlslpp::dot(offset, up)) / iosFreezeBase.radius, -1.0f, 1.0f));
++        if (minRadius > 0.0f) {
++            // A close shoulder camera looks steeply down on him: frame him
++            // from a few body heights back, a little above.
++            iosFreezeBase.radius = std::max(iosFreezeBase.radius, minRadius);
++            iosFreezeBase.pitch = std::clamp(iosFreezeBase.pitch, 0.12f, 0.45f);
++        }
 +        debuggerInspector.paused = true;
 +        return true;
 +    }
@@ -224,10 +236,10 @@ index 7cae864..3bbfb4c 100644
          if (debuggerInspector.paused && !fromEarlyPresent) {
              if (ext.userConfig->developerMode) {
 diff --git a/src/hle/rt64_state.h b/src/hle/rt64_state.h
-index 7a8c13b..735f7b1 100644
+index 7a8c13b..a73d881 100644
 --- a/src/hle/rt64_state.h
 +++ b/src/hle/rt64_state.h
-@@ -32,6 +32,29 @@
+@@ -32,6 +32,33 @@
  #include "rt64_rdp_tmem.h"
  #include "rt64_workload_queue.h"
  
@@ -244,6 +256,10 @@ index 7a8c13b..735f7b1 100644
 +    extern std::atomic<bool> iosFreezeActive;
 +    extern std::atomic<bool> iosFreezeHasPivot;
 +    extern std::atomic<float> iosFreezePivot[3];
++    // Half the player's height in the game's units (0 when unknown): the
++    // orbit keeps at least a few body heights away, whatever the game's own
++    // camera distance.
++    extern std::atomic<float> iosFreezeSize;
 +    extern std::atomic<bool> iosFreezeHasEye;
 +    extern std::atomic<float> iosFreezeEye[3];
 +    extern std::atomic<float> iosFreezeForward[3];
@@ -257,7 +273,7 @@ index 7a8c13b..735f7b1 100644
  namespace RT64 {
      struct Application;
      struct Interpreter;
-@@ -148,6 +171,8 @@ namespace RT64 {
+@@ -148,6 +175,8 @@ namespace RT64 {
          void fullSyncFramebufferPairTiles(Workload &workload, FramebufferPair &fbPair, uint32_t &loadOpCursor, uint32_t &rdpTileCursor);
          void listProcessBegin();
          void listProcessEnd();

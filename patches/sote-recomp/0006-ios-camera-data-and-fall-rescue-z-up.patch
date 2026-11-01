@@ -1,5 +1,5 @@
 diff --git a/src/main.cpp b/src/main.cpp
-index 457ca53..d8f48cc 100644
+index 457ca53..0cfeb0c 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -3187,20 +3187,22 @@ void cheat_reload_settings() {
@@ -74,7 +74,7 @@ index 457ca53..d8f48cc 100644
          fall_frames = 0;
          still_frames = 0;
          std::printf("[sote][cheats] fall rescue to %.1f,%.1f,%.1f\n", safe[0], safe[1], safe[2]);
-@@ -3295,6 +3297,40 @@ void sote_cheats_frame(uint8_t* rdram) {
+@@ -3295,6 +3297,42 @@ void sote_cheats_frame(uint8_t* rdram) {
          vi - outrider_object_vi.load(std::memory_order_relaxed) < 30);
  #ifndef _WIN32
      cheat_fall_rescue(rdram, event);
@@ -100,13 +100,15 @@ index 457ca53..d8f48cc 100644
 +        sote::control_bindings::context_active(sote::control_bindings::Context::OnFoot)) {
 +        // The middle of his body, as modern_aim.cpp aims at.
 +        const float middle = (read_guest_float(rdram, player + 0x68U) + read_guest_float(rdram, player + 0x6CU)) * 0.5f;
++        const bool sized = std::isfinite(middle) && std::fabs(middle) < 200.0f;
 +        sote::platform::note_player_position(
 +            read_guest_float(rdram, player + 0x50U),
 +            read_guest_float(rdram, player + 0x54U),
-+            read_guest_float(rdram, player + 0x58U) + (std::isfinite(middle) && std::fabs(middle) < 200.0f ? middle : 0.0f));
++            read_guest_float(rdram, player + 0x58U) + (sized ? middle : 0.0f),
++            sized ? std::fabs(middle) : 0.0f);
 +    }
 +    else {
-+        sote::platform::note_player_position(NAN, NAN, NAN);
++        sote::platform::note_player_position(NAN, NAN, NAN, 0.0f);
 +    }
 +
 +    while (sote::platform::game_held()) {
@@ -115,7 +117,7 @@ index 457ca53..d8f48cc 100644
  #endif
  }
  
-@@ -4711,8 +4747,9 @@ extern "C" void sote_note_droid_text_buffer_draw(
+@@ -4711,8 +4749,16 @@ extern "C" void sote_note_droid_text_buffer_draw(
              static_cast<uint64_t>(vi_count.load(std::memory_order_relaxed)),
              event, slot);
  #ifndef _WIN32
@@ -123,7 +125,14 @@ index 457ca53..d8f48cc 100644
 -    if (!text.empty()) sote::platform::note_message_drawn();
 +    // iOS: a tap on a message dismisses it (with Start), only while one is
 +    // drawn and visible, and only on it (its top line, in N64 pixels).
-+    if (!text.empty() && valid_position && a > 0) sote::platform::note_message_drawn(position_y);
++    // Hidden communicator slots are still drawn, parked at x = -1000
++    // (sote_hide_communicator_slot), so only count text on screen.
++    bool has_letters = false;
++    for (const unsigned char c : text) has_letters = has_letters || std::isalnum(c) != 0;
++    if (valid_position && a > 0 && position_x >= 0 && position_x < 320 &&
++        position_y >= 0 && position_y < 240 && has_letters) {
++        sote::platform::note_message_drawn(position_y);
++    }
  #endif
  }
  

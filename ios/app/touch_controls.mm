@@ -24,6 +24,7 @@ namespace RT64 {
     extern std::atomic<bool> iosFreezeActive;
     extern std::atomic<bool> iosFreezeHasPivot;
     extern std::atomic<float> iosFreezePivot[3];
+    extern std::atomic<float> iosFreezeSize;
     extern std::atomic<bool> iosFreezeHasEye;
     extern std::atomic<float> iosFreezeEye[3];
     extern std::atomic<float> iosFreezeForward[3];
@@ -891,8 +892,8 @@ namespace {
         else if ((state.role == Role::Look) && !state.moved && (event != nil) &&
                  (CACurrentMediaTime() - state.down < MenuTapTime)) {
             if ([self menuShowing]) {
-                // A tap on a row of the pause or options menu picks it; on
-                // other menus a tap confirms, like A.
+                // A tap on a row of the pause, options or profile screen
+                // picks it; on other menus a tap confirms, like A.
                 const int row = [self menuRowAt:state.last];
                 if (row >= 0) {
                     [self chooseMenuRow:row];
@@ -951,9 +952,11 @@ static bool menuRowSelected(const sote::menu_skin::Row &row) {
     return ((row.color >> 24) & 255) >= 0xA0 && ((row.color >> 16) & 255) >= 0xD0 && ((row.color >> 8) & 255) >= 0xA0;
 }
 
-// The setting of the pause or options menu under a point, which the game
-// reports as focused_setting when it is selected: >= 0 for a row, -2 for a
-// point off the rows of those menus, -1 for any other menu.
+// What a tap in the game's menus lands on, as a target code: the setting of
+// the pause or options menu (0-99, as the game reports it in
+// focused_setting), a player row of the profile screen (100 + row), or one
+// of its Options / Rename / Clear actions (200 + action). -2 for a point off
+// those, -1 for any other menu.
 - (int)menuRowAt:(CGPoint)point {
     const auto snapshot = sote::menu_skin::latest();
     if (snapshot == nullptr) {
@@ -1002,14 +1005,68 @@ static bool menuRowSelected(const sote::menu_skin::Row &row) {
         return -2;
     }
 
+    if (snapshot->screen == sote::menu_skin::Screen::Profiles) {
+        // Four player rows 59 apart from y 107 (name and difficulty boxes,
+        // x 88-872), then Options, Rename and Clear across y 391-439.
+        if ((c.x >= 80) && (c.x <= 880)) {
+            for (int i = 0; i < 4; i++) {
+                const CGFloat y = 107.0 + i * 59;
+                if ((c.y >= y - 6) && (c.y < y + 53)) {
+                    return 100 + i;
+                }
+            }
+        }
+
+        if ((c.y >= 383) && (c.y <= 447)) {
+            for (int i = 0; i < 3; i++) {
+                const CGFloat x = 281.0 + i * 199;
+                if ((c.x >= x - 99) && (c.x < x + 100)) {
+                    return 200 + i;
+                }
+            }
+        }
+
+        return -2;
+    }
+
     return -1;
 }
 
-// The setting the pause or options menu has selected, or -1.
-- (int)menuFocus {
+// The game's own selection for a kind of target (see menuRowAt): the
+// setting, 100 + the active player row, or 200 + the highlighted action
+// (199 with none). -1 when that menu isn't up.
+- (int)menuFocusFor:(int)kind {
     const auto snapshot = sote::menu_skin::latest();
     if (snapshot == nullptr) {
         return -1;
+    }
+
+    if (kind == 1) {
+        if (snapshot->screen != sote::menu_skin::Screen::Profiles) {
+            return -1;
+        }
+
+        for (int i = 0; i < 4; i++) {
+            if (((snapshot->rows[51 + i].color >> 16) & 255) >= 160) {
+                return 100 + i;
+            }
+        }
+
+        return -1;
+    }
+
+    if (kind == 2) {
+        if (snapshot->screen != sote::menu_skin::Screen::Profiles) {
+            return -1;
+        }
+
+        for (int i = 0; i < 3; i++) {
+            if (((snapshot->rows[76 + i].color >> 16) & 255) > 150) {
+                return 200 + i;
+            }
+        }
+
+        return 199;
     }
 
     if (snapshot->focused_setting >= 0) {
@@ -1031,21 +1088,28 @@ static bool menuRowSelected(const sote::menu_skin::Row &row) {
     return -1;
 }
 
-// Moves the menu's selection to a tapped row with D-pad presses, watching
-// the game's own selection, then confirms with A.
-- (void)chooseMenuRow:(int)row {
-    const int focus = [self menuFocus];
+// Moves the menu's selection to a tapped target with presses, watching the
+// game's own selection, then confirms it: menu rows with Up/Down and A,
+// player rows with Up/Down and Start, profile actions with L/R and A.
+- (void)chooseMenuRow:(int)target {
+    const int kind = target / 100;
+    const int focus = [self menuFocusFor:kind];
     if (focus < 0) {
         [self pulse:N64A];
         return;
     }
 
-    _menuTarget = row;
+    _menuTarget = target;
     _menuSteps = 0;
     _menuLastFocus = -1;
-    // The options menu's return row (0) sits below the settings.
-    _menuDirection = ((row == 0) && (sote::menu_skin::latest() != nullptr) &&
-        (sote::menu_skin::latest()->screen == sote::menu_skin::Screen::Options)) ? 1 : ((row > focus) ? 1 : -1);
+    if ((kind == 0) && (target == 0) && (sote::menu_skin::latest() != nullptr) &&
+        (sote::menu_skin::latest()->screen == sote::menu_skin::Screen::Options)) {
+        // The options menu's return row (0) sits below the settings.
+        _menuDirection = 1;
+    }
+    else {
+        _menuDirection = (target > focus) ? 1 : -1;
+    }
 }
 
 - (void)tickMenuTap:(CFTimeInterval)now {
@@ -1058,7 +1122,8 @@ static bool menuRowSelected(const sote::menu_skin::Row &row) {
         return;
     }
 
-    const int focus = [self menuFocus];
+    const int kind = _menuTarget / 100;
+    const int focus = [self menuFocusFor:kind];
     if ((focus < 0) || (_menuSteps > 12)) {
         _menuTarget = -1;
         return;
@@ -1066,7 +1131,7 @@ static bool menuRowSelected(const sote::menu_skin::Row &row) {
 
     if (focus == _menuTarget) {
         _menuTarget = -1;
-        [self pulse:N64A];
+        [self pulse:(kind == 1) ? N64Start : N64A];
         return;
     }
 
@@ -1077,7 +1142,12 @@ static bool menuRowSelected(const sote::menu_skin::Row &row) {
 
     _menuLastFocus = focus;
     _menuSteps++;
-    [self pulse:(_menuDirection > 0) ? N64DDown : N64DUp];
+    if (kind == 2) {
+        [self pulse:(_menuDirection > 0) ? N64R : N64L];
+    }
+    else {
+        [self pulse:(_menuDirection > 0) ? N64DDown : N64DUp];
+    }
 }
 
 // Queues a short press of an N64 button, after any already queued, so
@@ -1307,7 +1377,9 @@ static bool menuRowSelected(const sote::menu_skin::Row &row) {
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
-    const bool havePivot = sote::platform::ios_player_position(&x, &y, &z);
+    float size = 0.0f;
+    const bool havePivot = sote::platform::ios_player_position(&x, &y, &z, &size);
+    RT64::iosFreezeSize.store(havePivot ? size : 0.0f);
     RT64::iosFreezePivot[0].store(x);
     RT64::iosFreezePivot[1].store(y);
     RT64::iosFreezePivot[2].store(z);

@@ -26,7 +26,7 @@ namespace sote::platform {
     void ios_set_game_held(bool held);
 
     // Dash's latest world position on foot; false when not on foot.
-    bool ios_player_position(float *x, float *y, float *z);
+    bool ios_player_position(float *x, float *y, float *z, float *half_height);
 
     // The game camera's latest eye and forward direction; false when unknown.
     bool ios_game_camera(float eye[3], float forward[3]);
