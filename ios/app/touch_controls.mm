@@ -251,16 +251,27 @@ namespace {
     int _photosToFiles;
 }
 
-// "v0.9.3", with the build number after it when it differs, from Info.plist.
+// "build 80 · Nov 9": the run number and UTC date CI writes into Info.plist
+// (SWBuildNumber, SWBuildDate); "build dev" for a local build.
 static NSString *appVersionText(void) {
     NSDictionary *info = NSBundle.mainBundle.infoDictionary;
-    NSString *version = info[@"CFBundleShortVersionString"] ?: @"?";
-    NSString *build = info[@"CFBundleVersion"];
-    if ((build.length > 0) && ![build isEqualToString:version]) {
-        return [NSString stringWithFormat:@"v%@ (%@)", version, build];
+    NSString *number = info[@"SWBuildNumber"];
+    if (![number isKindOfClass:NSString.class] || (number.length == 0)) {
+        return @"build dev";
     }
 
-    return [NSString stringWithFormat:@"v%@", version];
+    NSString *day = info[@"SWBuildDate"];
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"];
+    formatter.timeZone = [NSTimeZone timeZoneWithName:@"UTC"];
+    formatter.dateFormat = @"yyyy-MM-dd";
+    NSDate *date = [day isKindOfClass:NSString.class] ? [formatter dateFromString:day] : nil;
+    if (date == nil) {
+        return [NSString stringWithFormat:@"build %@", number];
+    }
+
+    formatter.dateFormat = @"MMM d";
+    return [NSString stringWithFormat:@"build %@ \u00B7 %@", number, [formatter stringFromDate:date]];
 }
 
 #pragma mark - Setup
@@ -322,7 +333,7 @@ static NSString *appVersionText(void) {
     // The app's version, shown with the tray (not a button).
     _versionLabel = [[UILabel alloc] init];
     _versionLabel.text = appVersionText();
-    _versionLabel.font = [UIFont systemFontOfSize:10 weight:UIFontWeightMedium];
+    _versionLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
     _versionLabel.textColor = [UIColor colorWithWhite:1.0 alpha:0.55];
     _versionLabel.textAlignment = NSTextAlignmentCenter;
     _versionLabel.userInteractionEnabled = NO;
@@ -530,7 +541,7 @@ static NSString *appVersionText(void) {
     _trayBacking.frame = CGRectMake(midX - (trayCount * TrayStep) / 2.0 - 4, trayY - 26, trayCount * TrayStep + 8, 52);
     _opacityRow.center = CGPointMake(midX, trayY - 56);
     // Just above the tray: START sits right below it.
-    _versionLabel.frame = CGRectMake(midX - 100, trayY - 40, 200, 12);
+    _versionLabel.frame = CGRectMake(midX - 100, trayY - 41, 200, 14);
     _toast.frame = CGRectMake(midX - 140, top + 50, 280, 30);
     _flash.frame = self.bounds;
     _stickHome = CGPointMake(left + 100, bottom - 96);

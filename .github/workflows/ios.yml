@@ -171,6 +171,16 @@ jobs:
           test -n "$app"
           mkdir -p Payload
           cp -R "$app" Payload/
+          # The build stamp: the run number and UTC date, shown by the app
+          # ("build 80 · Nov 9") and first in the release text. The app is
+          # unsigned here, so its Info.plist can still change.
+          BUILD_DATE=$(date -u +%Y-%m-%d)
+          echo "BUILD_DATE=$BUILD_DATE" >> "$GITHUB_ENV"
+          plist="Payload/$(basename "$app")/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" "$plist"
+          /usr/libexec/PlistBuddy -c "Add :SWBuildNumber string ${{ github.run_number }}" "$plist"
+          /usr/libexec/PlistBuddy -c "Add :SWBuildDate string $BUILD_DATE" "$plist"
+          plutil -p "$plist" | grep -E 'CFBundleVersion|CFBundleShortVersionString|SWBuild'
           version=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" "$app/Info.plist")
           echo "IPA_NAME=SotE-iOS-$version.ipa" >> "$GITHUB_ENV"
           zip -qry "SotE-iOS-$version.ipa" Payload
@@ -211,5 +221,31 @@ jobs:
           fi
           grep -qx "### What's in $RELEASE_TAG" docs/RELEASE_NOTES.md || {
             echo "::error::docs/RELEASE_NOTES.md has no line \"### What's in $RELEASE_TAG\""; exit 1; }
+          { echo "Build ${{ github.run_number }} · $BUILD_DATE"; echo; cat docs/RELEASE_NOTES.md; } > "$RUNNER_TEMP/notes.md"
           gh release create "$RELEASE_TAG" "$IPA_NAME" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Shadows of the Empire for iOS $RELEASE_TAG" --notes-file docs/RELEASE_NOTES.md --latest
+            --title "Shadows of the Empire for iOS $RELEASE_TAG" --notes-file "$RUNNER_TEMP/notes.md" --latest
+
+      # Pushes to main: the IPA to the public "ios-latest" prerelease, never
+      # marked Latest; the versioned releases stay as they are.
+      - name: Publish to "ios-latest" release
+        if: steps.key.outputs.present == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          printf '%s\n' "Build ${{ github.run_number }} · $BUILD_DATE" \
+            "Test build, rebuilt on every push to main (commit $GITHUB_SHA). It may not have been tried yet; for the newest release see https://github.com/$GITHUB_REPOSITORY/releases/latest" \
+            "$IPA_NAME is unsigned: sign and install it with SideStore or AltStore. No ROM is included: the app asks for your own copy of the game." \
+            > "$RUNNER_TEMP/latest.md"
+          if gh release view ios-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit ios-latest --repo "$GITHUB_REPOSITORY" --title "iOS latest build" \
+              --notes-file "$RUNNER_TEMP/latest.md" --prerelease --latest=false
+            # One IPA only: drop the last build's if its name (version) differs.
+            gh release view ios-latest --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
+              | grep -vxF "$IPA_NAME" | while read -r old; do
+                  gh release delete-asset ios-latest "$old" --repo "$GITHUB_REPOSITORY" --yes
+                done
+            gh release upload ios-latest "$IPA_NAME" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create ios-latest "$IPA_NAME" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "iOS latest build" --notes-file "$RUNNER_TEMP/latest.md" --prerelease --latest=false
+          fi
