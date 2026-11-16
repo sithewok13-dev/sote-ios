@@ -4,11 +4,6 @@ on:
   push:
   pull_request:
   workflow_dispatch:
-    inputs:
-      release:
-        description: Publish this build as a GitHub release with this tag (e.g. v0.9.5); leave empty for a plain build
-        required: false
-        default: ""
 
 # A newer push makes an unfinished run pointless; macOS minutes are costly.
 concurrency:
@@ -73,27 +68,27 @@ jobs:
           name: SotE-unsigned-ipa
           path: SotE-unsigned.ipa
 
-  # The playable app. The owner's ROM, encrypted, lives in their private
-  # files repo (branch sote-rom), read with the JK_FILES_TOKEN secret and
-  # unlocked with SOTE_ROM_KEY; without both this job does nothing. The
-  # unlocked ROM is deleted once the game code is generated, and is never put
-  # in the IPA: like SotE-Recomp's Windows release, players supply their own.
+  # A check that the playable app still builds. The owner's ROM, encrypted,
+  # lives in their private files repo (branch sote-rom), read with the
+  # JK_FILES_TOKEN secret and unlocked with SOTE_ROM_KEY; without both this job
+  # does nothing. The unlocked ROM is deleted once the game code is generated.
+  # The app holds the recompiled game code, so it is NOT published or uploaded
+  # from this public repo (no release, no ios-latest, no artifact): players
+  # make their own in a private copy of github.com/sithewok13-dev/sote-builder.
   game:
     runs-on: macos-15
     if: github.event_name != 'pull_request'
     permissions:
-      contents: write  # the release, when one is asked for
+      contents: read
     env:
       SOTE_ROM_KEY: ${{ secrets.SOTE_ROM_KEY }}
       JK_FILES_TOKEN: ${{ secrets.JK_FILES_TOKEN }}
-      RELEASE_TAG: ${{ inputs.release }}
     steps:
       - name: Check for the ROM and its key
         id: key
         run: |
           if [ -n "$SOTE_ROM_KEY" ] && [ -n "$JK_FILES_TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else
             echo "::notice::SOTE_ROM_KEY or JK_FILES_TOKEN is not set; skipping the game build."
-            if [ -n "$RELEASE_TAG" ]; then echo "::error::A release needs the game build"; exit 1; fi
           fi
 
       - uses: actions/checkout@v4
@@ -172,7 +167,7 @@ jobs:
           mkdir -p Payload
           cp -R "$app" Payload/
           # The build stamp: the run number and UTC date, shown by the app
-          # ("build 80 · Nov 9") and first in the release text. The app is
+          # ("build 80 · Nov 9"), as the builder does. The app is
           # unsigned here, so its Info.plist can still change.
           BUILD_DATE=$(date -u +%Y-%m-%d)
           echo "BUILD_DATE=$BUILD_DATE" >> "$GITHUB_ENV"
@@ -204,48 +199,9 @@ jobs:
           PY
           echo "VERSION=$version" >> "$GITHUB_ENV"
 
-      - uses: actions/upload-artifact@v4
-        if: steps.key.outputs.present == 'true'
-        with:
-          name: ${{ env.IPA_NAME }}
-          path: ${{ env.IPA_NAME }}
-          retention-days: 30
-
-      - name: Publish the release
-        if: steps.key.outputs.present == 'true' && env.RELEASE_TAG != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # Nothing made from the ROM leaves this machine.
+      - name: Delete the game code and the app
+        if: always() && steps.key.outputs.present == 'true'
         run: |
-          if [ "$RELEASE_TAG" != "v$VERSION" ]; then
-            echo "::error::Tag $RELEASE_TAG doesn't match the app's version $VERSION"; exit 1
-          fi
-          grep -qx "### What's in $RELEASE_TAG" docs/RELEASE_NOTES.md || {
-            echo "::error::docs/RELEASE_NOTES.md has no line \"### What's in $RELEASE_TAG\""; exit 1; }
-          { echo "Build ${{ github.run_number }} · $BUILD_DATE"; echo; cat docs/RELEASE_NOTES.md; } > "$RUNNER_TEMP/notes.md"
-          gh release create "$RELEASE_TAG" "$IPA_NAME" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-            --title "Shadows of the Empire for iOS $RELEASE_TAG" --notes-file "$RUNNER_TEMP/notes.md" --latest
-
-      # Pushes to main: the IPA to the public "ios-latest" prerelease, never
-      # marked Latest; the versioned releases stay as they are.
-      - name: Publish to "ios-latest" release
-        if: steps.key.outputs.present == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          printf '%s\n' "Build ${{ github.run_number }} · $BUILD_DATE" \
-            "Test build, rebuilt on every push to main (commit $GITHUB_SHA). It may not have been tried yet; for the newest release see https://github.com/$GITHUB_REPOSITORY/releases/latest" \
-            "$IPA_NAME is unsigned: sign and install it with SideStore or AltStore. No ROM is included: the app asks for your own copy of the game." \
-            > "$RUNNER_TEMP/latest.md"
-          if gh release view ios-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit ios-latest --repo "$GITHUB_REPOSITORY" --title "iOS latest build" \
-              --notes-file "$RUNNER_TEMP/latest.md" --prerelease --latest=false
-            # One IPA only: drop the last build's if its name (version) differs.
-            gh release view ios-latest --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' \
-              | grep -vxF "$IPA_NAME" | while read -r old; do
-                  gh release delete-asset ios-latest "$old" --repo "$GITHUB_REPOSITORY" --yes
-                done
-            gh release upload ios-latest "$IPA_NAME" --repo "$GITHUB_REPOSITORY" --clobber
-          else
-            gh release create ios-latest "$IPA_NAME" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
-              --title "iOS latest build" --notes-file "$RUNNER_TEMP/latest.md" --prerelease --latest=false
-          fi
+          rm -rf third_party/SotE-Recomp/generated build Payload SotE-iOS-*.ipa "$RUNNER_TEMP/rom" \
+            ~/Library/Developer/Xcode/DerivedData

@@ -1,28 +1,54 @@
-# Shadows of the Empire for iOS
+# Star Wars: Shadows of the Empire for iPhone (SotE-Recomp iOS port)
 
-An unofficial port of Star Wars: Shadows of the Empire (N64) to iPhone and
-iPad, built on [N64Recomp], [N64ModernRuntime] and [RT64] (Metal through
-plume). Releases: see this repository's Releases page.
+Play **Star Wars: Shadows of the Empire** (the 1996 Nintendo 64 game) on iPhone, with touch controls. It's an unofficial port of GTTeancum's [SotE-Recomp](https://github.com/GTTeancum/SotE-Recomp), which turns the N64 game into native code: no emulator.
 
-**This repository holds no ROM, no ROM-derived code and no game data.** You
-supply your own USA v1.2 (Rev 2) ROM; the app reads it from your device.
-`.gitignore` blocks ROM files and the `generated/` output.
+<!-- iPhone screenshots go here: put them in docs/ios/screenshots/ and link them with
+https://raw.githubusercontent.com/sithewok13-dev/sote-ios/main/docs/ios/screenshots/<file>.jpg -->
+*Screenshots from an iPhone are coming soon.*
+
+**You need your own copy of the game: a ROM of the USA v1.2 (Rev 2) cartridge. No ROM and nothing made from it is in this repository.** The app has the game's code in it, rebuilt from your ROM, so you make your own copy of the app instead of downloading one.
+
+## Get it: build your own
+
+**[Shadows of the Empire builder](https://github.com/sithewok13-dev/sote-builder)** makes the app from your ROM, in your own private GitHub copy, for free, and you can do it all from your phone: share your ROM as a Google Drive or Dropbox link, tap **Run workflow**, and install the `SotE.ipa` it makes with SideStore, Feather, a signing service, AltStore or Sideloadly. [Step by step](https://github.com/sithewok13-dev/sote-builder#make-it)
+
+There's no ready-made app to download, and please don't share the one you make: it's made from your game.
+
+## Cool features
+
+- **Native, not emulated:** SotE-Recomp turns the game's own code into code for the phone, and [RT64](https://github.com/rt64/rt64) draws it with Metal.
+- **Touch controls** like the other ports: a stick appears where your left thumb lands, and you drag anywhere else to look. **Modern** controls (move and strafe, look separately) by default, or the N64's **Classic** turn-and-walk.
+- **Gyro aiming:** off, while touching, or always, with SENS for look speed (1x to 4x).
+- **A photo camera:** tap for a photo, slide sideways for a burst. Photos go straight to your Photos app.
+- **A cheat:** infinite health, lives, ammo, missiles and vehicle health, a rescue from bottomless falls (Dash is put back on the last ledge he stood on), and LEVEL SELECT.
+- **A start card:** CONTINUE goes straight back into the game as your last player.
+- **Menus by touch:** tap a row to pick it, swipe for the D-pad.
+- **Game controllers** work too.
 
 ## Thanks
 
-This port exists because of [SotE-Recomp] by GTTeancum. Asked whether it
-could be ported, GTTeancum licensed SotE-Recomp's original code under MIT
-(2026-10-28, commit `7aec3d4`, answering issue #21) and welcomed ports. Its
-game code is the game layer here. Per its `LICENSES.md`, that grant does not
-cover game files, music (`Sdata/MUSIC`), artwork, fonts or ROM-derived code,
-so none of those are copied here. The submodules are pinned to the same
-upstream commits SotE-Recomp uses. Thanks also to the [N64Recomp] and [RT64]
-projects.
+This port exists because of other people's hard work:
+
+- **[GTTeancum](https://github.com/GTTeancum)**, who made [SotE-Recomp](https://github.com/GTTeancum/SotE-Recomp), the PC port of Shadows of the Empire this is built on. When asked, GTTeancum opened its code to everyone under the MIT licence and welcomed ports like this one. Its game code, menus, modern controls and cheats are what this app runs. Thank you!
+- **Wiseguy ([Mr-Wiseguy](https://github.com/Mr-Wiseguy)) and the contributors** of [N64Recomp](https://github.com/N64Recomp/N64Recomp) and [N64ModernRuntime](https://github.com/N64Recomp/N64ModernRuntime), the recompiler and runtime that make native ports of N64 games possible.
+- **Darío ([DarioSamo](https://github.com/DarioSamo)), Wiseguy and the contributors** of [RT64](https://github.com/rt64/rt64) and its graphics layer [plume](https://github.com/renderbag/plume), which draw the game.
+- The **[SDL](https://github.com/libsdl-org/SDL)** team, for sound and controllers.
+- **LucasArts**, for making Shadows of the Empire.
+
+## Sorry about the bugs
+
+This is an unofficial fan project and a beta, so please expect bugs. It plays on an iPhone (an iPhone 18 Pro Max), but iPads and older iPhones haven't been tried. Holding CAMERA for selfies, Action Freeze (slide down) and the cinematic burst (slide up) are still being worked on: the view can land in the wrong place, show copies of Dash, or come out one flat colour. Now and then the screen can flash one colour for a frame. There's no multiplayer to worry about: it's a single-player game. Sorry about the rough edges. If something goes wrong, please [open an issue here](https://github.com/sithewok13-dev/sote-ios/issues), not at SotE-Recomp, and attach `sote-log.txt` from Files > SotE.
+
+Not affiliated with or endorsed by Lucasfilm, Disney or LucasArts, or by the SotE-Recomp, N64Recomp or RT64 developers.
+
+---
+
+*The rest of this page is for developers: how the port is made.*
 
 ## Status
 
-Playable on iPhone (v0.9.5): touch controls, tray, photos and bursts,
-cheats, level selector, gyro. Selfies, Action Freeze and the cinematic burst
+Playable on iPhone (v0.9.6): touch controls, tray, photos and bursts,
+cheats, level selector, gyro, a start card on the player screen. Selfies, Action Freeze and the cinematic burst
 are still being worked on.
 
 ## Layout
@@ -121,64 +147,38 @@ files repo. The `game` CI job reads it with the `JK_FILES_TOKEN` secret,
 unlocks it with `SOTE_ROM_KEY`, generates the code (SotE-Recomp's
 `prepare_recomp_rom.py`, N64Recomp, RSPRecomp), deletes the unlocked ROM,
 builds the app with `-DSOTE_GENERATED_DIR=...`, checks that nothing like the
-ROM is in it, and uploads `SotE-iOS-<version>.ipa`, kept for 30 days. A
-manual run with `release=v<version>` also publishes it as a GitHub release
-with `docs/RELEASE_NOTES.md`. Without the secrets the job is skipped.
+ROM is in it, and then deletes the game code and the app. It is a check
+that the app still builds: since the app holds the recompiled game code,
+nothing from this job is uploaded or published here (no release, no
+artifact). Players build their own with the
+[builder](https://github.com/sithewok13-dev/sote-builder), which runs
+`tools/rom.py` (finds the ROM in a download, converts its byte order, checks
+it), the same generation steps on Linux, then `tools/configure.sh` and the
+build on a Mac, in their own private repo. Without the secrets the job is skipped.
 
-Like SotE-Recomp's Windows release, the IPA contains no ROM: every player
-supplies their own. It holds the recompiled game code (as SotE-Recomp's
+The IPA contains no ROM: every player supplies their own. It holds the recompiled game code (as SotE-Recomp's
 executable does); SotE-Recomp's `LICENSES.md` notes that its MIT grant does
 not cover ROM-derived code or the game's names, art and media.
 
 ## Playing
 
-1. Install `SotE-iOS-<version>.ipa` with Feather, Sideloadly, AltStore or
-   similar.
-2. Copy your own *Shadows of the Empire* (USA, v1.2 / Rev 2) ROM into
-   **Files > On My iPhone > SotE**: a `.z64`, `.v64` or `.n64` file under any
-   name, or a `.zip` with one inside. The app converts it to
-   `sote.us.v1.2.z64` on first launch and checks it is the right game.
-3. Open SotE. The on-screen controls follow the house style of the other
-   ports (`jk-files` docs/HOUSE_STYLE.md, section 3):
-   - a floating stick in the lower left (hidden until your thumb lands);
-     drag anywhere else to look. CONTROLS in the tray picks Modern (the
-     default: move and strafe, look separately, like the other ports) or
-     Classic (the N64's own turn-and-walk);
-   - A, B and the C buttons on the right, Z under L, L and R at the top;
-   - START at the bottom: tap for Start (begin, pause, skip story screens);
-     hold 0.45 s (its border fills) for the tray: CONTROLS, GYRO (off /
-     while touching / always), SENS (look speed for drags and the gyro,
-     1x to 4x), OPACITY (slider; hold to reset), CAMERA, CHEAT, LEVEL
-     SELECT (cheat on), D-PAD, SELFIES, with the app's version
-     just above it;
-   - CAMERA (top middle, beside CHEAT): tap for a photo; slide sideways for a
-     burst (every 0.2 s, up to 10); hold 0.5 s for selfies (the game freezes
-     and the camera swings round in front of Dash, 1, 3 or 5 shots, SELFIES
-     in the tray); slide up for a cinematic burst (5 shots sweeping round the
-     frozen moment); slide down for Action Freeze (drag to orbit, pinch to
-     zoom, two fingers to pan, CAMERA to shoot, ✕ to leave). Photos go to
-     your library, or to Files > SotE > Screenshots without access;
-   - CHEAT (shown from the tray): hold 0.5 s to switch infinite health,
-     lives, ammo, missiles and vehicle health, and saves Dash from
-     bottomless falls (he is put back on the last ledge he stood on). Its
-     sound is the app's own, or a random clip of yours from Files > SotE >
-     Cheat Sounds;
-   On the game's player screen the app shows its own card: CONTINUE (the
-   last player, straight into the game), NEW PLAYER, CHANGE PLAYER, or the
-   game's own screen; the app works the game's screens itself.
-   In the game's menus, tap a row of the pause or options menu, or a player or Options /
-   Rename / Clear on the player screen, to pick it
-   (elsewhere a tap is A), and swipe up, down, left or right for the D-pad;
-   the D-pad itself shows while a menu is up. A tap on a message box clears it (Start). A game controller works too.
+How to make, install and play the app: see the
+[builder](https://github.com/sithewok13-dev/sote-builder). On the phone the
+app reads the ROM from **Files > On My iPhone > SotE** (a `.z64`, `.v64` or
+`.n64` file under any name, or a `.zip` with one inside), converts it to
+`sote.us.v1.2.z64` on first launch and checks it is the right game.
 
 If anything goes wrong, `sote-log.txt` and the `logs` folder in the same
 place say what happened.
 
 ## Building
 
-CI (`.github/workflows/ios.yml`) builds for device and simulator on every
-push. The device job uploads `SotE-unsigned.ipa`; sign it with your own Apple
-ID through Sideloadly, AltStore or similar to install it.
+CI (`.github/workflows/ios.yml`) builds the ROM-free self-test app for device
+and simulator on pull requests and manual runs; the device job uploads
+`SotE-unsigned.ipa`. `parts.yml`, run by hand, puts the build's ready-made
+parts (RT64's host tools and CMake's check results, nothing of the game) in
+the `ios-parts` release, which saves the builder about 9 Mac minutes;
+`tools/parts-key.sh` names the file that fits the current sources.
 
 Locally on a Mac with Xcode:
 

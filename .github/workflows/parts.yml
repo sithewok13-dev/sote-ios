@@ -1,0 +1,65 @@
+# Makes the ready-made parts every builder copy downloads (this repo's "ios-parts"
+# release): RT64's build tools for the Mac (file_to_c, spirv_cross_msl) and the
+# results of CMake's checks, which otherwise take about 9 of the Mac build's
+# minutes. Nothing of the game: it configures with an empty stand-in for the
+# game's code. Run it by hand after changing CMakeLists.txt, ios/, patches/,
+# tools/ or a submodule, or when the Mac runners get a new Xcode or CMake (the
+# builder says "No ready-made parts match" then). Only runs in this public repo.
+name: Ready-made parts
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # The same as the builder's (github.com/sithewok13-dev/sote-builder).
+  XCODE_VERSION: "16.4"
+
+jobs:
+  parts:
+    if: ${{ github.repository == 'sithewok13-dev/sote-ios' }}
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode
+        run: |
+          if [ -d "/Applications/Xcode_$XCODE_VERSION.app" ]; then sudo xcode-select -s "/Applications/Xcode_$XCODE_VERSION.app/Contents/Developer"; fi
+          xcodebuild -version | head -1
+
+      - name: Submodules
+        run: |
+          git submodule update --init --depth 1 third_party/SotE-Recomp
+          git submodule update --init --recursive \
+            third_party/N64Recomp third_party/N64ModernRuntime third_party/rt64 third_party/SDL
+
+      - name: Configure with an empty stand-in for the game's code
+        run: |
+          stub="$RUNNER_TEMP/stub"
+          mkdir -p "$stub/RecompiledFuncs"
+          touch "$stub/RecompiledFuncs/funcs.h" "$stub/RecompiledFuncs/funcs_0.c" "$stub/aspMain.cpp"
+          tools/configure.sh "$stub" io.github.player.sote
+
+      - name: Pack the parts
+        run: |
+          name=$(tools/parts-key.sh)
+          echo "NAME=$name" >> "$GITHUB_ENV"
+          python3 tools/configure-seed.py build/CMakeCache.txt seed.cmake
+          mkdir -p parts/host_tools && cp -R build/host_tools/bin parts/host_tools/
+          cp seed.cmake parts/
+          ls -lR parts
+          tar -cJf "$name" -C parts .
+
+      - name: Upload them to the "ios-parts" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view ios-parts >/dev/null 2>&1 ||
+            gh release create ios-parts --title "Ready-made parts" --latest=false \
+              --notes "RT64's build tools and CMake's check results for the Mac build (made by parts.yml). Nothing of the game. The builder downloads the file that matches it."
+          gh release upload ios-parts "$NAME" --clobber
+          # keep the newest 6
+          gh release view ios-parts --json assets --jq '.assets | sort_by(.createdAt) | reverse | .[6:] | .[].name' |
+            while read -r old; do gh release delete-asset ios-parts "$old" --yes; done
