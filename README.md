@@ -37,7 +37,7 @@ This port exists because of other people's hard work:
 
 ## Sorry about the bugs
 
-This is an unofficial fan project and a beta, so please expect bugs. It plays on an iPhone (an iPhone 18 Pro Max), but iPads and older iPhones haven't been tried. Holding CAMERA for selfies, Action Freeze (slide down) and the cinematic burst (slide up) are still being worked on: the view can land in the wrong place, show copies of Dash, or come out one flat colour. Now and then the screen can flash one colour for a frame. There's no multiplayer to worry about: it's a single-player game. Sorry about the rough edges. If something goes wrong, please [open an issue here](https://github.com/sithewok13-dev/sote-ios/issues), not at SotE-Recomp, and attach `sote-log.txt` from Files > SotE.
+This is an unofficial fan project and a beta, so please expect bugs. It plays on an iPhone, but iPads and older iPhones haven't been tried. Holding CAMERA for selfies, Action Freeze (slide down) and the cinematic burst (slide up) are still being worked on: the view can land in the wrong place, show copies of Dash, or come out one flat colour. Now and then the screen can flash one colour for a frame. There's no multiplayer to worry about: it's a single-player game. Sorry about the rough edges. If something goes wrong, please [open an issue here](https://github.com/sithewok13-dev/sote-ios/issues), not at SotE-Recomp, and attach `sote-log.txt` from Files > SotE.
 
 Not affiliated with or endorsed by Lucasfilm, Disney or LucasArts, or by the SotE-Recomp, N64Recomp or RT64 developers.
 
